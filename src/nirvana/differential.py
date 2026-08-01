@@ -192,7 +192,93 @@ class DifferentialReport:
     def to_dict(self) -> dict[str, Any]:
         value = jsonable(self)
         validate_contract(value, "differential-report.schema.json")
+        validate_differential_report_consistency(value)
         return value
+
+
+def validate_differential_report_consistency(value: dict[str, Any]) -> None:
+    """Derive report validity from execution facts instead of trusting a flag."""
+
+    implementation_names = [str(item["name"]) for item in value["implementations"]]
+    if len(set(implementation_names)) != len(implementation_names):
+        raise ValueError("differential report implementation names must be unique")
+
+    corpus_cases = int(value["corpus_case_count"])
+    requested_fuzz_cases = int(value["requested_fuzz_case_count"])
+    fuzz_cases = int(value["fuzz_case_count"])
+    case_count = int(value["case_count"])
+    repetitions = int(value["repetitions"])
+    if corpus_cases < 1:
+        raise ValueError("differential report requires at least one corpus case")
+    if fuzz_cases > requested_fuzz_cases:
+        raise ValueError(
+            "differential report generated more fuzz cases than were requested"
+        )
+    if case_count != corpus_cases + fuzz_cases:
+        raise ValueError(
+            "differential report case count does not equal corpus plus fuzz cases"
+        )
+
+    scheduled = int(value["scheduled_executions"])
+    successful = int(value["successful_executions"])
+    blocked = int(value["blocked_executions"])
+    expected_scheduled = case_count * len(implementation_names) * repetitions
+    if scheduled != expected_scheduled:
+        raise ValueError(
+            "differential report scheduled execution count conflicts with cases, "
+            "implementations, and repetitions"
+        )
+    if successful > scheduled:
+        raise ValueError(
+            "differential report successful execution count exceeds its schedule"
+        )
+    if blocked > scheduled - successful:
+        raise ValueError(
+            "differential report blocked execution count exceeds incomplete executions"
+        )
+
+    execution_slots = case_count * len(implementation_names)
+    if int(value["flaky_executions"]) > execution_slots:
+        raise ValueError("differential report flaky execution count is impossible")
+    if int(value["truncated_transcripts"]) > execution_slots:
+        raise ValueError("differential report truncated transcript count is impossible")
+
+    execution_facts_are_valid = (
+        scheduled > 0 and successful == scheduled and blocked == 0
+    )
+    if bool(value["valid"]) != execution_facts_are_valid:
+        raise ValueError(
+            "differential report validity conflicts with its execution facts"
+        )
+    invalid_reasons = value["invalid_reasons"]
+    if execution_facts_are_valid and invalid_reasons:
+        raise ValueError("valid differential report cannot contain invalid reasons")
+    if not execution_facts_are_valid and not invalid_reasons:
+        raise ValueError("invalid differential report requires at least one reason")
+
+    mismatch_ids: set[str] = set()
+    expected_implementations = set(implementation_names)
+    mismatches = value["mismatches"]
+    if len(mismatches) > case_count:
+        raise ValueError("differential report has more mismatches than cases")
+    for mismatch in mismatches:
+        case_id = str(mismatch["case_id"])
+        if case_id in mismatch_ids:
+            raise ValueError(f"duplicate differential mismatch case: {case_id}")
+        mismatch_ids.add(case_id)
+        outcome_names = [str(item["implementation"]) for item in mismatch["outcomes"]]
+        if (
+            len(set(outcome_names)) != len(outcome_names)
+            or set(outcome_names) != expected_implementations
+        ):
+            raise ValueError(
+                f"differential mismatch {case_id} does not contain exactly one outcome "
+                "for every implementation"
+            )
+        if any(int(item["run_count"]) != repetitions for item in mismatch["outcomes"]):
+            raise ValueError(
+                f"differential mismatch {case_id} outcome run count conflicts with repetitions"
+            )
 
 
 def compare(manifest: DifferentialManifest, runner: CommandRunner) -> DifferentialReport:

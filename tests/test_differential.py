@@ -4,7 +4,11 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from nirvana.differential import DifferentialManifest, compare
+from nirvana.differential import (
+    DifferentialManifest,
+    compare,
+    validate_differential_report_consistency,
+)
 from nirvana.policy import CommandResult, CommandRunner, ExecutionMode, ExecutionPolicy
 
 
@@ -106,6 +110,28 @@ class DifferentialTests(unittest.TestCase):
         self.assertTrue(report.valid)
         self.assertEqual(report.successful_executions, report.scheduled_executions)
         self.assertTrue(report.mismatches)
+
+    def test_report_validity_is_derived_from_cross_field_execution_facts(self) -> None:
+        manifest = DifferentialManifest.load(FIXTURE / "manifest.toml")
+        denied = compare(
+            manifest, CommandRunner(ExecutionPolicy(), ExecutionMode.DENY)
+        ).to_dict()
+        denied["valid"] = True
+        with self.assertRaisesRegex(ValueError, "validity conflicts"):
+            validate_differential_report_consistency(denied)
+
+        valid = compare(
+            manifest,
+            CommandRunner(
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
+                ExecutionMode.HOST,
+            ),
+        ).to_dict()
+        valid["scheduled_executions"] += 1
+        with self.assertRaisesRegex(ValueError, "scheduled execution count conflicts"):
+            validate_differential_report_consistency(valid)
 
     def test_fuzz_budget_shortfall_is_reported(self) -> None:
         manifest = replace(

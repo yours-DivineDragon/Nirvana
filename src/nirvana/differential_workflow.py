@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import validate_contract
+from .differential import validate_differential_report_consistency
 from .ledger import EvidenceLedger
 from .models import CodeLocation, EvidenceLevel, EvidenceRecord, Hypothesis, MismatchClass
 from .util import atomic_write_json, canonical_json, sha256_bytes, sha256_file, utc_now
@@ -21,6 +22,7 @@ def load_differential_report(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("differential report must be one JSON object")
     validate_contract(value, "differential-report.schema.json")
+    validate_differential_report_consistency(value)
     return value
 
 

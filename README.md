@@ -6,7 +6,7 @@ Nirvana is a local, evidence-gated security research system for authorized bug-b
 
 ## Current status
 
-Version `0.4.1` implements the complete orchestration skeleton described by the two founding PDFs:
+Version `0.4.2` implements the complete orchestration skeleton described by the two founding PDFs:
 
 - hostile-repository intake with commit, dependency, submodule, artifact, toolchain, privilege, upgrade, external-dependency, and snapshot provenance;
 - opt-in, digest-pinned Docker build/test baselines with hash-bound generated ABI, IDL, bytecode, and build artifacts;
@@ -165,7 +165,7 @@ nirvana spec feedback triage.json minimized.json \
 
 Attached mismatches become `localised` hypotheses in the run ledger; they never self-promote to proof. A private, seven-part coordinated-disclosure packet can be prepared, but Nirvana never sends it:
 
-A differential report is valid only when every scheduled execution runs and produces normalizable output. Blocked, timed-out, or unnormalizable runs make the CLI print `INVALID`, exit `2`, and refuse `--run-directory`, `spec attach`, classification, and disclosure. Non-zero returns with normalizable output remain valid observable outcomes. Repeating an attachment for the same valid report is idempotent.
+A differential report is valid only when every scheduled execution runs and produces normalizable output. Blocked, timed-out, or unnormalizable runs make the CLI print `INVALID`, exit `2`, and refuse `--run-directory`, `spec attach`, classification, and disclosure. Every imported report has its schedule, case counts, implementation outcomes, and validity re-derived before use; the `valid` field is never trusted by itself. Non-zero returns with normalizable output remain valid observable outcomes. Repeating an attachment for the same valid report is idempotent.
 
 ```bash
 nirvana disclose prepare differential-report.json triage.json minimized.json \
