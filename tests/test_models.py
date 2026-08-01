@@ -22,6 +22,12 @@ class FindingGateTests(unittest.TestCase):
             reproduction_instructions=["run test"],
             remediation="fix",
             regression_test="test_fix",
+            supporting_evidence=["E-1"],
+            reproducer_evidence_id=(
+                "E-1"
+                if level.value in {"executable", "exploit_demonstrated", "formally_established"}
+                else None
+            ),
         )
 
     def test_high_severity_rejects_structural_evidence(self) -> None:

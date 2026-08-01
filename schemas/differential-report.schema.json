@@ -3,14 +3,44 @@
   "$id": "https://nirvana.security/schemas/differential-report.schema.json",
   "title": "Nirvana differential report",
   "type": "object",
-  "required": ["schema_version", "created_at", "spec_sha256", "corpus_sha256", "case_count", "mismatches", "blocked_executions"],
+  "required": [
+    "schema_version", "created_at", "spec_sha256", "corpus_sha256",
+    "implementations", "corpus_case_count", "fuzz_case_count", "case_count",
+    "repetitions", "fuzz_seed", "mismatches", "blocked_executions", "flaky_executions"
+  ],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "created_at": {"type": "string"},
     "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "corpus_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "implementations": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["name", "command", "cwd", "language", "sources", "source_sha256", "producer", "model", "prompt_sha256", "tool_version"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "cwd": {"type": "string"},
+          "language": {"type": "string", "minLength": 1},
+          "sources": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "source_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "producer": {"enum": ["human", "codex", "claude-code", "kimi-code", "other-agent"]},
+          "model": {"type": ["string", "null"]},
+          "prompt_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+          "tool_version": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "corpus_case_count": {"type": "integer", "minimum": 0},
+    "fuzz_case_count": {"type": "integer", "minimum": 0},
     "case_count": {"type": "integer", "minimum": 0},
+    "repetitions": {"type": "integer", "minimum": 2},
+    "fuzz_seed": {"type": "integer"},
     "blocked_executions": {"type": "integer", "minimum": 0},
+    "flaky_executions": {"type": "integer", "minimum": 0},
     "mismatches": {
       "type": "array",
       "items": {
@@ -19,11 +49,29 @@
         "properties": {
           "case_id": {"type": "string"},
           "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-          "classification": {
-            "enum": ["unclassified", "harness_bug", "implementation_bug", "spec_ambiguity", "clear_but_unsafe_spec"]
-          },
+          "classification": {"enum": ["unclassified", "harness_bug", "implementation_bug", "spec_ambiguity", "clear_but_unsafe_spec"]},
           "notes": {"type": "array", "items": {"type": "string"}},
-          "outcomes": {"type": "array", "minItems": 2, "items": {"type": "object"}}
+          "outcomes": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "required": ["implementation", "return_code", "normalized_output", "stdout_sha256", "stderr_sha256", "duration_ms", "run_count", "flaky", "observed_signatures", "error"],
+              "properties": {
+                "implementation": {"type": "string"},
+                "return_code": {"type": ["integer", "null"]},
+                "normalized_output": {"type": ["string", "null"]},
+                "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "duration_ms": {"type": "integer", "minimum": 0},
+                "run_count": {"type": "integer", "minimum": 2},
+                "flaky": {"type": "boolean"},
+                "observed_signatures": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+                "error": {"type": ["string", "null"]}
+              },
+              "additionalProperties": false
+            }
+          }
         },
         "additionalProperties": false
       }

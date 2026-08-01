@@ -12,10 +12,10 @@ Read this file before target execution, external research, or disclosure.
 ## Execution
 
 - Default mode is `deny`.
-- Use Docker only with a pinned image digest, read-only target mount, no network, no secrets, dropped capabilities, bounded processes/memory/time, and disposable storage.
+- Use Docker only with a pinned image digest, non-root user, read-only target mount, no network, no secrets, dropped capabilities, bounded processes/memory/time, and disposable writable tool storage.
 - Use host execution only for locally authored reviewed fixtures. It requires `allow_host_execution = true`, explicit acceptance that host networking cannot be isolated, and `--execution-mode host`.
 - Never forward the host environment wholesale. Record only an allowlisted, redacted environment description.
-- Never run generated `curl | shell`, package lifecycle scripts, live-chain transactions, signing, deployment, or target Git mutation.
+- Never run generated `curl | shell`, opaque shell command strings, package lifecycle scripts, live-chain transactions, signing, deployment, or target-context Git.
 
 ## External research
 

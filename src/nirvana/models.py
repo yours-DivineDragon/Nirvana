@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from .contracts import validate_contract
 from .util import jsonable, utc_now
 
 
@@ -114,10 +115,13 @@ class Hypothesis:
             raise ValueError("hypothesis requires a location and verification plan")
 
     def to_dict(self) -> dict[str, Any]:
-        return jsonable(self)
+        value = jsonable(self)
+        validate_contract(value, "hypothesis.schema.json")
+        return value
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Hypothesis":
+        validate_contract(value, "hypothesis.schema.json")
         required = {
             "hypothesis_id",
             "security_property",
@@ -193,10 +197,13 @@ class EvidenceRecord:
             raise ValueError("executable and stronger evidence requires the reproducing command array")
 
     def to_dict(self) -> dict[str, Any]:
-        return jsonable(self)
+        value = jsonable(self)
+        validate_contract(value, "evidence.schema.json")
+        return value
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "EvidenceRecord":
+        validate_contract(value, "evidence.schema.json")
         required = {"evidence_id", "level", "kind", "summary", "source"}
         missing = required - value.keys()
         if missing:
@@ -236,6 +243,8 @@ class Finding:
     reproduction_instructions: list[str]
     remediation: str
     regression_test: str
+    supporting_evidence: list[str]
+    reproducer_evidence_id: str | None = None
     novelty: NoveltyClass = NoveltyClass.UNCERTAIN
     related_issues: list[str] = field(default_factory=list)
 
@@ -256,6 +265,16 @@ class Finding:
             raise ValueError(f"finding fields must not be empty: {', '.join(empty)}")
         if not self.locations or not self.causal_path or not self.reproduction_instructions:
             raise ValueError("finding requires locations, a causal path, and reproduction instructions")
+        if not self.supporting_evidence:
+            raise ValueError("finding requires explicit supporting evidence identifiers")
+        if len(set(self.supporting_evidence)) != len(self.supporting_evidence):
+            raise ValueError("finding supporting evidence identifiers must be unique")
+        for evidence_id in self.supporting_evidence:
+            _validate_identifier(evidence_id, "E")
+        if self.reproducer_evidence_id is not None:
+            _validate_identifier(self.reproducer_evidence_id, "E")
+            if self.reproducer_evidence_id not in self.supporting_evidence:
+                raise ValueError("finding reproducer evidence must be listed as supporting evidence")
 
     def validate_reporting_gate(self) -> None:
         if EVIDENCE_RANK[self.evidence_level] < EVIDENCE_RANK[EvidenceLevel.STRUCTURALLY_CONFIRMED]:
@@ -263,13 +282,19 @@ class Finding:
         if self.severity in {Severity.HIGH, Severity.CRITICAL}:
             if EVIDENCE_RANK[self.evidence_level] < EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
                 raise ValueError("high and critical findings require executable evidence or stronger")
+        if EVIDENCE_RANK[self.evidence_level] >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
+            if self.reproducer_evidence_id is None:
+                raise ValueError("executable findings require a runner-minted reproducer evidence id")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate_reporting_gate()
-        return jsonable(self)
+        value = jsonable(self)
+        validate_contract(value, "finding.schema.json")
+        return value
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Finding":
+        validate_contract(value, "finding.schema.json")
         finding = cls(
             finding_id=str(value["finding_id"]),
             hypothesis_id=str(value["hypothesis_id"]),
@@ -287,6 +312,12 @@ class Finding:
             reproduction_instructions=[str(item) for item in value["reproduction_instructions"]],
             remediation=str(value["remediation"]),
             regression_test=str(value["regression_test"]),
+            supporting_evidence=[str(item) for item in value["supporting_evidence"]],
+            reproducer_evidence_id=(
+                str(value["reproducer_evidence_id"])
+                if value.get("reproducer_evidence_id") is not None
+                else None
+            ),
             novelty=NoveltyClass(value.get("novelty", NoveltyClass.UNCERTAIN.value)),
             related_issues=[str(item) for item in value.get("related_issues", [])],
         )
@@ -302,6 +333,9 @@ class DifferentialOutcome:
     stdout_sha256: str
     stderr_sha256: str
     duration_ms: int
+    run_count: int = 1
+    flaky: bool = False
+    observed_signatures: list[str] = field(default_factory=list)
     error: str | None = None
 
 

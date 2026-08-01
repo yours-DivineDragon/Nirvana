@@ -5,7 +5,7 @@
 1. Pin one specification revision and canonical conformance suite.
 2. Create each implementation in a separate session and workspace.
 3. Prevent implementations from reading one another.
-4. Record coding agent, session, prompt, language, libraries, toolchain, and commit. Diversity reduces but does not eliminate correlated error.
+4. Record producer, model and prompt hash when agent-generated, language, source-set hash, command, libraries, tool version, and commit. Diversity reduces but does not eliminate correlated error.
 5. Do not call model APIs from Nirvana; start Codex, Claude Code, or Kimi Code directly.
 
 ## Build the comparator
@@ -13,6 +13,8 @@
 Each implementation reads one JSON value from stdin and emits one JSON value to stdout. Put each case in JSONL as `{"id":"...","input":...}`. Configure implementations as command arrays in TOML.
 
 Prove normalization separately. Normalize only behavior the specification declares irrelevant. Preserve reverts/errors, return codes, and exact raw-output hashes.
+
+Set at least two repeated runs per implementation so flakes are not mistaken for semantic divergence. Use a fixed `fuzz_seed` and bounded `fuzz_cases` for deterministic JSON mutation; preserve the canonical corpus separately.
 
 ## Generate cases
 

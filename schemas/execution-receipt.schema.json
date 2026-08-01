@@ -13,7 +13,7 @@
     "result"
   ],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "created_at": {"type": "string"},
     "evidence_id": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"},
     "replay_of": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -41,11 +41,16 @@
       "required": [
         "evidence_id",
         "hypothesis_id",
+        "evidence_level",
         "kind",
         "summary",
+        "adapter",
+        "claim",
+        "assertions",
         "command",
         "cwd",
         "expected_return_codes",
+        "replay_mode",
         "tool_version",
         "assumptions",
         "stdin_base64",
@@ -54,12 +59,17 @@
       "properties": {
         "evidence_id": {"type": "string"},
         "hypothesis_id": {"type": "string"},
+        "evidence_level": {"enum": ["structurally_confirmed", "executable"]},
         "kind": {"type": "string"},
         "summary": {"type": "string"},
+        "adapter": {"type": "string"},
+        "claim": {"type": "object"},
+        "assertions": {"type": "array", "minItems": 1, "items": {"type": "object"}},
         "command": {"type": "array", "items": {"type": "string"}},
         "cwd": {"type": "string"},
         "expected_return_codes": {"type": "array", "items": {"type": "integer"}},
-        "tool_version": {"type": ["string", "null"]},
+        "replay_mode": {"enum": ["assertions", "strict"]},
+        "tool_version": {"type": "string"},
         "assumptions": {"type": "array", "items": {"type": "string"}},
         "stdin_base64": {"type": "string"},
         "stdin_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
@@ -77,7 +87,8 @@
         "stderr_base64",
         "duration_ms",
         "blocked_reason",
-        "timed_out"
+        "timed_out",
+        "assertions"
       ],
       "properties": {
         "command": {"type": "array", "items": {"type": "string"}},
@@ -88,7 +99,22 @@
         "stderr_base64": {"type": "string"},
         "duration_ms": {"type": "integer", "minimum": 0},
         "blocked_reason": {"type": ["string", "null"]},
-        "timed_out": {"type": "boolean"}
+        "timed_out": {"type": "boolean"},
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["assertion_id", "passed", "observed_sha256", "error"],
+            "properties": {
+              "assertion_id": {"type": "string"},
+              "passed": {"type": "boolean"},
+              "observed_sha256": {"type": ["string", "null"]},
+              "error": {"type": ["string", "null"]}
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     }

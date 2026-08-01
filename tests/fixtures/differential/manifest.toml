@@ -2,12 +2,27 @@ spec = "SPEC.md"
 corpus = "cases.jsonl"
 normalizer = "json"
 
+[analysis]
+repetitions = 2
+fuzz_cases = 0
+fuzz_seed = 7
+
 [[implementations]]
 name = "floor"
 command = ["python3", "implementation_a.py"]
 cwd = "."
+language = "python"
+sources = ["implementation_a.py"]
+producer = "human"
+model = "human"
+tool_version = "python-3"
 
 [[implementations]]
 name = "nearest"
 command = ["python3", "implementation_b.py"]
 cwd = "."
+language = "python"
+sources = ["implementation_b.py"]
+producer = "human"
+model = "human"
+tool_version = "python-3"

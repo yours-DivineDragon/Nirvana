@@ -14,13 +14,13 @@ The canonical workflow is:
 
 | Layer | Contract | Foundation status |
 |---|---|---|
-| Intake and reproducibility | Pin identity, inventory inputs, detect toolchains, record exclusions | Non-executing root-repository identity and hashed snapshot implemented |
-| Polyglot frontend | Generic parser through domain-complete runtime dialect | EVM syntax candidates only |
+| Intake and reproducibility | Pin identity, inventory inputs, detect toolchains, record exclusions | Non-executing identity, scalable manifest, configurable exclusions, and complete stream-hashed snapshot implemented |
+| Polyglot frontend | Generic parser through domain-complete runtime dialect | EVM lexical fallback plus supplied solc standard-JSON AST context |
 | Security Semantic Graph | Typed syntax, control, data, type, effect, authority, asset, state, trust, history, evidence layers | Schema boundary planned |
 | Coverage scheduler | Business-flow x threat-lens work queue | Agent workflow specified |
-| Candidate ensemble | Deterministic, graph, logic, attacker, spec, variant, differential, test-gap generators | Deterministic and differential foundations |
+| Candidate ensemble | Deterministic, graph, logic, attacker, spec, variant, differential, test-gap generators | Contextual EVM candidates; provenance-bound differential fuzz/flake foundation |
 | Hypothesis board | Typed shared state rather than agent chat | Ledger-backed imports implemented |
-| Verification router | Cheapest suitable static, dynamic, symbolic, formal, differential verifier | Runner-minted receipts and matching replay implemented; domain adapters pending |
+| Verification router | Cheapest suitable static, dynamic, symbolic, formal, differential verifier | Adapter-bound assertions, structural corroboration, and strict/semantic replay implemented |
 | Evidence ledger | Immutable provenance and artifacts | Hash-chained JSONL implemented |
 | Adversarial validation | Devil's Advocate, Rescue Critic, deduplication and novelty | Workflow specified |
 | Output and learning | Confirmed report, analyst queue, rejection archive, detector distillation | Initial report and gates implemented |

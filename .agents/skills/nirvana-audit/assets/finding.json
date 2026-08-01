@@ -17,6 +17,8 @@
   "reproduction_instructions": [],
   "remediation": "Root-cause remediation",
   "regression_test": "Test proving the fix",
+  "supporting_evidence": ["E-REPLACE-ME"],
+  "reproducer_evidence_id": "E-REPLACE-ME",
   "novelty": "uncertain_novelty",
   "related_issues": []
 }

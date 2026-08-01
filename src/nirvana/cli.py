@@ -9,6 +9,7 @@ from pathlib import Path
 from .board import HypothesisBoard
 from .differential import DifferentialManifest, compare
 from .doctor import doctor_report
+from .intake import IntakePolicy
 from .ledger import EvidenceLedger
 from .policy import CommandRunner, ExecutionMode, ExecutionPolicy
 from .util import atomic_write_json
@@ -20,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.1.1")
+    parser.add_argument("--version", action="version", version="nirvana 0.2.0")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -29,6 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser = commands.add_parser("audit", help="perform safe intake and candidate generation")
     audit_parser.add_argument("target", type=Path)
     audit_parser.add_argument("--output", type=Path, default=Path("nirvana-runs"))
+    audit_parser.add_argument(
+        "--policy", type=Path, help="shared TOML policy, including [intake] controls"
+    )
+    audit_parser.add_argument(
+        "--solc-ast",
+        type=Path,
+        help="existing solc standard-JSON output for contextual AST candidates",
+    )
 
     hypothesis = commands.add_parser("hypothesis", help="operate on the typed hypothesis board")
     hypothesis_commands = hypothesis.add_subparsers(dest="hypothesis_command", required=True)
@@ -55,6 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_verify.add_argument("run_directory", type=Path)
     evidence_verify.add_argument("evidence_id")
     _add_execution_options(evidence_verify)
+    evidence_corroborate = evidence_commands.add_parser(
+        "corroborate",
+        help="raise the structural ceiling from independent deterministic artifacts",
+    )
+    evidence_corroborate.add_argument("run_directory", type=Path)
+    evidence_corroborate.add_argument("hypothesis_id")
+    evidence_corroborate.add_argument("evidence_ids", nargs="+")
 
     finding = commands.add_parser("finding", help="validate and confirm an evidence-gated finding")
     finding_commands = finding.add_subparsers(dest="finding_command", required=True)
@@ -96,7 +112,12 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{tool['name']}: {marker}{detail}")
             return 0
         if args.command == "audit":
-            result = audit(args.target, args.output)
+            result = audit(
+                args.target,
+                args.output,
+                IntakePolicy.load(args.policy),
+                args.solc_ast,
+            )
             print(result.run_directory)
             print(f"confirmed findings: 0; analyst hypotheses: {len(result.hypotheses)}")
             return 0
@@ -112,6 +133,12 @@ def main(argv: list[str] | None = None) -> int:
             board = HypothesisBoard(args.run_directory)
             if args.evidence_command == "import":
                 evidence_record = board.import_evidence(args.path)
+            elif args.evidence_command == "corroborate":
+                corroborated = board.corroborate_evidence(
+                    args.hypothesis_id, args.evidence_ids
+                )
+                print(" ".join(item.evidence_id for item in corroborated))
+                return 0
             else:
                 policy = ExecutionPolicy.load(args.policy)
                 runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
@@ -133,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             policy = ExecutionPolicy.load(args.policy)
             runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
             report = compare(DifferentialManifest.load(args.manifest), runner)
-            atomic_write_json(args.output.resolve(), report)
+            atomic_write_json(args.output.resolve(), report.to_dict())
             print(args.output.resolve())
             print(
                 f"cases: {report.case_count}; mismatches: {len(report.mismatches)}; "

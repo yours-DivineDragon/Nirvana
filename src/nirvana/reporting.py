@@ -28,7 +28,7 @@ def render_audit_report(
         f"- Confirmed findings: **{len(findings)}**",
         f"- Unconfirmed hypotheses: **{len(queued_hypotheses)}**",
         "",
-        "> No candidate below the executable evidence gate is presented as a confirmed vulnerability.",
+        "> Confirmed findings require structural corroboration; high and critical findings require executable evidence.",
         "",
         "## Scope",
         "",
@@ -61,6 +61,7 @@ def render_audit_report(
                 f"- Root cause: {finding.root_cause}",
                 f"- Impact: {finding.impact}",
                 f"- Reproducer: `{finding.reproducer}`",
+                f"- Supporting evidence: `{', '.join(finding.supporting_evidence)}`",
                 "",
             ]
         )

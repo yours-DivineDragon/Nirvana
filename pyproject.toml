@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nirvana-security"
-version = "0.1.1"
+version = "0.2.0"
 description = "Local, evidence-gated security research orchestration for agentic coding tools"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,3 +19,6 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/nirvana/schemas" = ["schemas/*.json"]
