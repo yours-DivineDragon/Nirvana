@@ -115,7 +115,7 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 
 Read `references/differential.md` fully. Generate implementations in isolated sessions/workspaces, pin the same specification, prevent cross-reading, and record source files, language, producer/model/prompt provenance, and tool version before `nirvana spec compare`. Use repeated runs and a seeded fuzz budget.
 
-1. Inspect the report's `valid`, `scheduled_executions`, `successful_executions`, and `invalid_reasons` fields before interpreting mismatch counts. Any blocked, timed-out, or unnormalizable execution makes the report invalid; the CLI exits nonzero and an invalid report cannot be attached, classified, or disclosed. A non-zero return with normalizable output remains a comparable observable outcome.
+1. Inspect the report's `valid`, `scheduled_executions`, `successful_executions`, and `invalid_reasons` fields before interpreting mismatch counts. Any blocked, timed-out, or unnormalizable execution makes the report invalid; the CLI exits nonzero and an invalid report cannot be attached, classified, or disclosed. Import gates re-derive validity from the schedule, counts, and implementation outcomes instead of trusting the serialized `valid` flag. A non-zero return with normalizable output remains a comparable observable outcome.
 2. Attach a valid report during compare with `--run-directory`, or use `nirvana spec attach`. Attached mismatches become localised hypotheses only. Repeating the same attachment is idempotent and returns the existing hypotheses.
 3. Reproduce and delta-minimize every stable mismatch with `nirvana spec minimize`.
 4. Rule out harness defects, then persist exactly one of the four classes with `nirvana spec classify`.

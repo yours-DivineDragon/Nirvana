@@ -54,14 +54,14 @@
         "additionalProperties": false
       }
     },
-    "corpus_case_count": {"type": "integer", "minimum": 0},
+    "corpus_case_count": {"type": "integer", "minimum": 1},
     "requested_fuzz_case_count": {"type": "integer", "minimum": 0},
     "fuzz_case_count": {"type": "integer", "minimum": 0},
-    "case_count": {"type": "integer", "minimum": 0},
+    "case_count": {"type": "integer", "minimum": 1},
     "repetitions": {"type": "integer", "minimum": 2},
     "fuzz_seed": {"type": "integer"},
     "valid": {"type": "boolean"},
-    "scheduled_executions": {"type": "integer", "minimum": 0},
+    "scheduled_executions": {"type": "integer", "minimum": 1},
     "successful_executions": {"type": "integer", "minimum": 0},
     "blocked_executions": {"type": "integer", "minimum": 0},
     "flaky_executions": {"type": "integer", "minimum": 0},

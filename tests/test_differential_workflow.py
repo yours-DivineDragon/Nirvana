@@ -122,6 +122,53 @@ class DifferentialWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "report is invalid"):
                 attach_report(audit_result.run_directory, report_path)
 
+    def test_self_declared_validity_cannot_bypass_downstream_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = compare(
+                DifferentialManifest.load(DIFF_FIXTURE / "manifest.toml"),
+                CommandRunner(ExecutionPolicy(), ExecutionMode.DENY),
+            ).to_dict()
+            self.assertEqual(report["successful_executions"], 0)
+            self.assertGreater(report["blocked_executions"], 0)
+            report["valid"] = True
+            report_path = root / "boolean-flipped-report.json"
+            atomic_write_json(report_path, report)
+            audit_result = audit(EVM_FIXTURE, root / "runs")
+
+            operations = {
+                "attach": lambda: attach_report(
+                    audit_result.run_directory, report_path
+                ),
+                "classify": lambda: classify_mismatch(
+                    report_path,
+                    "odd",
+                    MismatchClass.IMPLEMENTATION_BUG,
+                    ["must never be reached"],
+                    root / "triage.json",
+                ),
+                "disclose": lambda: prepare_disclosure_packet(
+                    report_path,
+                    root / "missing-triage.json",
+                    root / "missing-minimization.json",
+                    root / "missing-context.json",
+                    "must never be reached",
+                    root / "packet.json",
+                ),
+            }
+            for name, operation in operations.items():
+                with self.subTest(workflow=name):
+                    with self.assertRaisesRegex(ValueError, "validity conflicts"):
+                        operation()
+
+            events = [
+                json.loads(line)["payload"]["event"]
+                for line in (audit_result.run_directory / "evidence.jsonl")
+                .read_text()
+                .splitlines()
+            ]
+            self.assertNotIn("differential_report_attached", events)
+
 
 if __name__ == "__main__":
     unittest.main()

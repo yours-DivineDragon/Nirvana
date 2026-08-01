@@ -34,7 +34,7 @@ This map records how version 0.4 implements the two founding PDFs and, equally i
 | Proved comparator | JSON/text normalizers have agreement/divergence fixtures | unit tests plus report normalizer |
 | Shared and generated cases | Canonical JSONL plus seeded bounded mutation; shortfalls are warnings | case and fuzz counts |
 | Repeat/flake detection | Two to twenty runs, observed signatures, stable/flake classification | each outcome plus `flaky_executions` |
-| Fail-closed harness validity | Every scheduled run must be unblocked, non-timeout, and normalizable; non-zero returns remain observable outcomes, while invalid reports cannot enter downstream workflows | `valid`, execution counts, `invalid_reasons`, CLI exit `2` |
+| Fail-closed harness validity | Every scheduled run must be unblocked, non-timeout, and normalizable; import gates derive validity from cross-field execution facts; non-zero returns remain observable outcomes, while invalid reports cannot enter downstream workflows | `valid`, execution counts, `invalid_reasons`, CLI exit `2` |
 | Four mismatch classes | Durable classification rejects `unclassified` as a final decision | `differential-triage.json` |
 | Minimize every seed | Deterministic JSON delta reduction reruns all implementations and refuses flaky cases | `differential-minimization.json` |
 | Feed back into prose/tests | Review-only spec amendment and regression corpus case | `differential-feedback.json` |
