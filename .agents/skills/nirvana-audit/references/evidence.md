@@ -22,7 +22,7 @@
 - Imported evidence records are capped at `localised`. Nirvana must run and replay every structural or executable adapter before it can affect a reporting ceiling.
 - Structural confirmation requires two distinct runner-minted and replay-verified solc-AST, Slither, or Semgrep receipts bound to the same snapshot and claim. This tier cannot support high or critical severity.
 - A process exit alone is never proof. The request must declare bounded fixed-string or JSON predicates for the specific verifier decision. Unbounded regular-expression assertions are not supported.
-- Executable evidence requires a separate patched-target negative control with an exact declared file delta. Nirvana runs the same command and predicates against both targets; a PoC that passes against both is rejected.
+- Executable evidence requires a separate patched-target negative control with an exact declared file delta that touches a hypothesis candidate location. Nirvana runs the same command, exploit predicates, and health invariants against both targets; a PoC that passes against both or a control that breaks the verifier is rejected.
 - Auditor-owned harnesses remain outside the target, contain no symlinks, are mounted read-only, and are hash-bound into mint and replay receipts.
 - Every finding lists its supporting evidence IDs. Executable findings bind a negative-control-verified reproducer ID, and evidence from another hypothesis or claim is rejected.
 

@@ -65,6 +65,7 @@ def doctor_report() -> dict[str, Any]:
             "deterministic_evm_candidates": True,
             "solc_ast_frontend": True,
             "runner_verified_structural_corroboration": True,
+            "paired_control_health_invariants": True,
             "sandboxed_execution": "docker" in available,
             # Conservative host probe only. A pinned image may contain Forge even
             # when the host does not; that image still needs an actual test run.

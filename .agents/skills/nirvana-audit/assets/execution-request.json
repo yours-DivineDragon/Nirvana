@@ -17,6 +17,14 @@
       "value": "[PASS] test_Reproducer"
     }
   ],
+  "control_invariants": [
+    {
+      "assertion_id": "A-TEST-SUITE-COMPLETED",
+      "source": "stdout",
+      "operator": "contains",
+      "value": "Suite result:"
+    }
+  ],
   "command": ["forge", "test", "--root", "/harness", "--match-test", "test_Reproducer", "-vvv"],
   "cwd": ".",
   "stdin": "",

@@ -59,6 +59,14 @@ class BoardTests(unittest.TestCase):
             "tool_version": "fixture-1",
         }
         if evidence_level == "executable":
+            request["control_invariants"] = [
+                {
+                    "assertion_id": "A-VERIFIER-HEALTHY",
+                    "source": "stdout",
+                    "operator": "contains",
+                    "value": "verifier healthy",
+                }
+            ]
             request["negative_control"] = {
                 "target_root": str(control_root.resolve()),
                 "changed_files": control_changed_files or ["src/Vault.sol"],
@@ -211,8 +219,12 @@ class BoardTests(unittest.TestCase):
             )
             policy = ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64)
             runner = CommandRunner(policy, ExecutionMode.DOCKER)
-            observed = CommandResult(command, 1, b"counterexample\n", b"", 4)
-            control = CommandResult(command, 0, b"patched behavior\n", b"", 2)
+            observed = CommandResult(
+                command, 1, b"counterexample\nverifier healthy\n", b"", 4
+            )
+            control = CommandResult(
+                command, 0, b"patched behavior\nverifier healthy\n", b"", 2
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 runner, "run", side_effect=[observed, control, observed, control]
@@ -220,6 +232,16 @@ class BoardTests(unittest.TestCase):
                 evidence = board.execute_evidence(request_path, runner)
                 self.assertEqual(evidence.source, "nirvana:command-runner")
                 self.assertTrue(evidence.metadata["runner_minted"])
+                receipt = json.loads(Path(evidence.artifact_path).read_text())
+                self.assertEqual(receipt["schema_version"], "1.3.0")
+                self.assertTrue(
+                    receipt["result"]["control_invariants"][0]["passed"]
+                )
+                self.assertTrue(
+                    receipt["negative_control"]["result"]["control_invariants"][0][
+                        "passed"
+                    ]
+                )
 
                 finding_path = root / "finding.json"
                 finding_path.write_text(
@@ -281,9 +303,9 @@ class BoardTests(unittest.TestCase):
                 ExecutionMode.DOCKER,
             )
             board = HypothesisBoard(result.run_directory)
-            first = CommandResult(command, 0, b"first\n", b"", 1)
-            second = CommandResult(command, 0, b"second\n", b"", 1)
-            control = CommandResult(command, 0, b"patched\n", b"", 1)
+            first = CommandResult(command, 0, b"first\nverifier healthy\n", b"", 1)
+            second = CommandResult(command, 0, b"second\nverifier healthy\n", b"", 1)
+            control = CommandResult(command, 0, b"patched\nverifier healthy\n", b"", 1)
             with patch.object(
                 runner, "run", side_effect=[first, control, second, control]
             ):
@@ -311,7 +333,9 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            same_result = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
+            same_result = CommandResult(
+                ["pytest"], 0, b"violation\nverifier healthy\n", b"", 1
+            )
             with patch.object(
                 runner, "run", side_effect=[same_result, same_result]
             ):
@@ -319,6 +343,54 @@ class BoardTests(unittest.TestCase):
                     HypothesisBoard(result.run_directory).execute_evidence(
                         request_path, runner
                     )
+
+    def test_negative_control_health_invariant_blocks_broken_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = audit(FIXTURE, root / "runs")
+            request_path = root / "request.json"
+            request_path.write_text(
+                json.dumps(
+                    self.execution_request(
+                        result.hypotheses[0],
+                        "E-BROKEN-CONTROL",
+                        ["pytest"],
+                        "violation",
+                        control_expected_return_code=1,
+                    )
+                )
+            )
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            positive = CommandResult(
+                ["pytest"], 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            broken_control = CommandResult(
+                ["pytest"],
+                1,
+                b"",
+                b"SyntaxError: invalid syntax\n",
+                1,
+            )
+            board = HypothesisBoard(result.run_directory)
+            with patch.object(
+                runner, "run", side_effect=[positive, broken_control]
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "negative control health invariants failed"
+                ):
+                    board.execute_evidence(request_path, runner)
+
+            self.assertNotIn(
+                "E-BROKEN-CONTROL",
+                {
+                    record["payload"].get("evidence", {}).get("evidence_id")
+                    for record in board.ledger.records()
+                    if record["payload"].get("event") == "evidence_recorded"
+                },
+            )
 
     def test_negative_control_delta_must_be_exact(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -336,6 +408,37 @@ class BoardTests(unittest.TestCase):
             )
             with patch.object(runner, "run") as run:
                 with self.assertRaisesRegex(ValueError, "do not exactly match"):
+                    HypothesisBoard(result.run_directory).execute_evidence(
+                        request_path, runner
+                    )
+                run.assert_not_called()
+
+    def test_negative_control_delta_must_touch_candidate_location(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            control_target = root / "control"
+            shutil.copytree(FIXTURE, control_target)
+            foundry = control_target / "foundry.toml"
+            foundry.write_text(foundry.read_text() + "\n# unrelated control edit\n")
+            result = audit(FIXTURE, root / "runs")
+            request = self.execution_request(
+                result.hypotheses[0],
+                "E-UNRELATED-CONTROL",
+                ["pytest"],
+                "violation",
+                control_root=control_target,
+                control_changed_files=["foundry.toml"],
+            )
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request))
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            with patch.object(runner, "run") as run:
+                with self.assertRaisesRegex(
+                    ValueError, "must change at least one hypothesis candidate location"
+                ):
                     HypothesisBoard(result.run_directory).execute_evidence(
                         request_path, runner
                     )
@@ -359,9 +462,15 @@ class BoardTests(unittest.TestCase):
             request_path = root / "request.json"
             request_path.write_text(json.dumps(request))
             command = ["pytest"]
-            positive = CommandResult(command, 0, b"violation stable\n", b"", 1)
-            first_control = CommandResult(command, 0, b"stable\n", b"", 1)
-            second_control = CommandResult(command, 0, b"violation\n", b"", 1)
+            positive = CommandResult(
+                command, 0, b"violation stable\nverifier healthy\n", b"", 1
+            )
+            first_control = CommandResult(
+                command, 0, b"stable\nverifier healthy\n", b"", 1
+            )
+            second_control = CommandResult(
+                command, 0, b"violation\nverifier healthy\n", b"", 1
+            )
             runner = CommandRunner(
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
@@ -375,6 +484,49 @@ class BoardTests(unittest.TestCase):
                 board.execute_evidence(request_path, runner)
                 with self.assertRaisesRegex(ValueError, "verification contract"):
                     board.verify_evidence("E-CONTROL-FLAKE", runner)
+
+    def test_negative_control_must_replay_health_invariants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = audit(FIXTURE, root / "runs")
+            request = self.execution_request(
+                result.hypotheses[0],
+                "E-CONTROL-HEALTH-FLAKE",
+                ["pytest"],
+                "violation",
+            )
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request))
+            command = ["pytest"]
+            positive = CommandResult(
+                command, 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            healthy_control = CommandResult(
+                command, 0, b"patched\nverifier healthy\n", b"", 1
+            )
+            broken_control = CommandResult(command, 0, b"patched\n", b"", 1)
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            board = HypothesisBoard(result.run_directory)
+            with patch.object(
+                runner,
+                "run",
+                side_effect=[positive, healthy_control, positive, broken_control],
+            ):
+                board.execute_evidence(request_path, runner)
+                with self.assertRaisesRegex(ValueError, "verification contract"):
+                    board.verify_evidence("E-CONTROL-HEALTH-FLAKE", runner)
+
+            replay = [
+                record["payload"]
+                for record in board.ledger.records()
+                if record["payload"].get("event") == "evidence_replay_failed"
+            ][-1]
+            self.assertFalse(
+                replay["negative_control"]["invariant_decision_matches"]
+            )
 
     def test_harness_overlay_is_hash_bound_and_replayed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -394,8 +546,12 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            positive = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
-            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
+            positive = CommandResult(
+                ["pytest"], 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            control = CommandResult(
+                ["pytest"], 0, b"patched\nverifier healthy\n", b"", 1
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 runner,
@@ -498,8 +654,12 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            observed = CommandResult(command, 0, b"stable\n", b"", 1)
-            control = CommandResult(command, 0, b"patched\n", b"", 1)
+            observed = CommandResult(
+                command, 0, b"stable\nverifier healthy\n", b"", 1
+            )
+            control = CommandResult(
+                command, 0, b"patched\nverifier healthy\n", b"", 1
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 original_runner, "run", side_effect=[observed, control]
@@ -574,12 +734,26 @@ class BoardTests(unittest.TestCase):
                 ExecutionMode.DOCKER,
             )
             first = CommandResult(
-                command, 0, b"[PASS] testExploit (gas: 12001)\nfinished in 1.23ms\n", b"", 2
+                command,
+                0,
+                b"[PASS] testExploit (gas: 12001)\nfinished in 1.23ms\nverifier healthy\n",
+                b"",
+                2,
             )
             second = CommandResult(
-                command, 0, b"[PASS] testExploit (gas: 12009)\nfinished in 7.89ms\n", b"", 9
+                command,
+                0,
+                b"[PASS] testExploit (gas: 12009)\nfinished in 7.89ms\nverifier healthy\n",
+                b"",
+                9,
             )
-            control = CommandResult(command, 0, b"[FAIL] patched target\n", b"", 3)
+            control = CommandResult(
+                command,
+                0,
+                b"[FAIL] patched target\nverifier healthy\n",
+                b"",
+                3,
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 runner, "run", side_effect=[first, control, second, control]
@@ -625,8 +799,12 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            observed = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
-            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
+            observed = CommandResult(
+                ["pytest"], 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            control = CommandResult(
+                ["pytest"], 0, b"patched\nverifier healthy\n", b"", 1
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 runner, "run", side_effect=[observed, control, observed, control]
@@ -679,9 +857,15 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            passing = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
-            failing = CommandResult(["pytest"], 0, b"no decision\n", b"", 1)
-            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
+            passing = CommandResult(
+                ["pytest"], 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            failing = CommandResult(
+                ["pytest"], 0, b"no decision\nverifier healthy\n", b"", 1
+            )
+            control = CommandResult(
+                ["pytest"], 0, b"patched\nverifier healthy\n", b"", 1
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 runner,
@@ -853,8 +1037,12 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            observed = CommandResult(command, 0, b"violation\n", b"", 1)
-            control = CommandResult(command, 0, b"patched\n", b"", 1)
+            observed = CommandResult(
+                command, 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            control = CommandResult(
+                command, 0, b"patched\nverifier healthy\n", b"", 1
+            )
             board = HypothesisBoard(result.run_directory)
             with patch.object(
                 runner, "run", side_effect=[observed, control, observed, control]
@@ -913,8 +1101,12 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            observed = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
-            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
+            observed = CommandResult(
+                ["pytest"], 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            control = CommandResult(
+                ["pytest"], 0, b"patched\nverifier healthy\n", b"", 1
+            )
             with patch.object(runner, "run", side_effect=[observed, control]):
                 evidence = HypothesisBoard(result.run_directory).execute_evidence(
                     request_path, runner

@@ -330,6 +330,7 @@ class CommandRunner:
             "--tmpfs=/workspace/artifacts:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             "--tmpfs=/workspace/broadcast:rw,noexec,nosuid,nodev,size=64m,mode=1777",
             "--tmpfs=/workspace/cache:rw,noexec,nosuid,nodev,size=256m,mode=1777",
+            "--tmpfs=/workspace/crytic-export:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             "--mount",
             f"type=bind,src={cwd},dst=/workspace,readonly",
             "--workdir=/workspace",

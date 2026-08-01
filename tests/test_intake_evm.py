@@ -95,9 +95,27 @@ class IntakeAndEvmTests(unittest.TestCase):
                     "artifacts",
                     "broadcast",
                     "cache",
+                    "crytic-export",
                 }
                 <= policy.excluded_directories
             )
+
+    def test_slither_crytic_export_does_not_mutate_the_scoped_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            (target / "Contract.sol").write_text("contract Contract {}\n")
+            intake = RepositoryIntake()
+            before = intake.inspect(target)
+
+            export = target / "crytic-export"
+            export.mkdir()
+            (export / "compile.json").write_text('{"generated": true}\n')
+            after = intake.inspect(target)
+
+            self.assertEqual(
+                after.target_snapshot_sha256, before.target_snapshot_sha256
+            )
+            self.assertNotIn("crytic-export/compile.json", {item.path for item in after.files})
 
     def test_solc_ast_scanner_emits_contextual_security_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
