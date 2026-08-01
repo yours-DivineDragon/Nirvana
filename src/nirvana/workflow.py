@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .evm import SolidityCandidateScanner
-from .intake import RepositoryIntake, ScopeManifest
+from .intake import RepositoryIntake, ScopeManifest, validate_scope_against_ledger
 from .ledger import EvidenceLedger
 from .models import Finding, Hypothesis
 from .reporting import render_audit_report
@@ -59,10 +59,12 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def refresh_report(run_directory: Path) -> None:
     resolved = run_directory.resolve(strict=True)
-    scope = ScopeManifest.from_dict(load_json(resolved / "scope.json"))
     ledger = EvidenceLedger(resolved / "evidence.jsonl")
     records = ledger.records()
     ledger.verify()
+    scope = validate_scope_against_ledger(
+        ScopeManifest.from_dict(load_json(resolved / "scope.json")), records
+    )
     hypotheses = [
         Hypothesis.from_dict(record["payload"]["hypothesis"])
         for record in records
@@ -73,14 +75,24 @@ def refresh_report(run_directory: Path) -> None:
         for record in records
         if record["payload"].get("event") == "finding_confirmed"
     ]
+    verified_evidence = sorted(
+        {
+            str(record["payload"]["evidence_id"])
+            for record in records
+            if record["payload"].get("event") == "evidence_verified"
+        }
+    )
     summary: dict[str, Any] = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "run_id": resolved.name,
         "target": scope.target_root,
         "commit": scope.repository_commit,
+        "target_snapshot_sha256": scope.target_snapshot_sha256,
+        "snapshot_complete": scope.snapshot_complete,
         "confirmed_findings": [item.to_dict() for item in findings],
         "hypothesis_count": len(hypotheses),
         "evidence_ceiling": scope.evidence_ceiling.value,
+        "verified_evidence": verified_evidence,
         "ledger_records": len(records),
     }
     atomic_write_json(resolved / "report.json", summary)

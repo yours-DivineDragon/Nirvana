@@ -1,0 +1,12 @@
+{
+  "evidence_id": "E-REPLACE-ME",
+  "hypothesis_id": "H-REPLACE-ME",
+  "kind": "failing_test",
+  "summary": "State exactly what outcome this command is expected to reproduce",
+  "command": ["forge", "test", "--match-test", "test_Reproducer", "-vvv"],
+  "cwd": ".",
+  "stdin": "",
+  "expected_return_codes": [1],
+  "tool_version": null,
+  "assumptions": []
+}

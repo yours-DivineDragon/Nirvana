@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.1.0")
+    parser.add_argument("--version", action="version", version="nirvana 0.1.1")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -43,6 +43,18 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_import = evidence_commands.add_parser("import")
     evidence_import.add_argument("run_directory", type=Path)
     evidence_import.add_argument("path", type=Path)
+    evidence_run = evidence_commands.add_parser(
+        "run", help="execute a reviewed request and mint an execution receipt"
+    )
+    evidence_run.add_argument("run_directory", type=Path)
+    evidence_run.add_argument("path", type=Path, help="execution request JSON")
+    _add_execution_options(evidence_run)
+    evidence_verify = evidence_commands.add_parser(
+        "verify", help="replay runner-minted evidence and compare its receipt"
+    )
+    evidence_verify.add_argument("run_directory", type=Path)
+    evidence_verify.add_argument("evidence_id")
+    _add_execution_options(evidence_verify)
 
     finding = commands.add_parser("finding", help="validate and confirm an evidence-gated finding")
     finding_commands = finding.add_subparsers(dest="finding_command", required=True)
@@ -97,8 +109,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(board.list_hypotheses(), indent=2, sort_keys=True))
             return 0
         if args.command == "evidence":
-            imported = HypothesisBoard(args.run_directory).import_evidence(args.path)
-            print(imported.evidence_id)
+            board = HypothesisBoard(args.run_directory)
+            if args.evidence_command == "import":
+                evidence_record = board.import_evidence(args.path)
+            else:
+                policy = ExecutionPolicy.load(args.policy)
+                runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
+                if args.evidence_command == "run":
+                    evidence_record = board.execute_evidence(args.path, runner)
+                else:
+                    evidence_record = board.verify_evidence(args.evidence_id, runner)
+            print(evidence_record.evidence_id)
             return 0
         if args.command == "finding":
             confirmed = HypothesisBoard(args.run_directory).confirm_finding(args.path)
@@ -123,6 +144,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     return 2
+
+
+def _add_execution_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--policy", type=Path)
+    parser.add_argument(
+        "--execution-mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default=ExecutionMode.DENY.value,
+    )
 
 
 if __name__ == "__main__":
