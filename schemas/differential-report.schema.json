@@ -8,10 +8,11 @@
     "spec_path", "corpus_path", "normalizer", "runner",
     "implementations", "corpus_case_count", "requested_fuzz_case_count",
     "fuzz_case_count", "case_count", "repetitions", "fuzz_seed", "mismatches",
-    "blocked_executions", "flaky_executions", "truncated_transcripts", "warnings"
+    "valid", "scheduled_executions", "successful_executions", "blocked_executions",
+    "flaky_executions", "truncated_transcripts", "invalid_reasons", "warnings"
   ],
   "properties": {
-    "schema_version": {"const": "2.0.0"},
+    "schema_version": {"const": "2.1.0"},
     "created_at": {"type": "string"},
     "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "corpus_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -59,9 +60,13 @@
     "case_count": {"type": "integer", "minimum": 0},
     "repetitions": {"type": "integer", "minimum": 2},
     "fuzz_seed": {"type": "integer"},
+    "valid": {"type": "boolean"},
+    "scheduled_executions": {"type": "integer", "minimum": 0},
+    "successful_executions": {"type": "integer", "minimum": 0},
     "blocked_executions": {"type": "integer", "minimum": 0},
     "flaky_executions": {"type": "integer", "minimum": 0},
     "truncated_transcripts": {"type": "integer", "minimum": 0},
+    "invalid_reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "warnings": {"type": "array", "items": {"type": "string"}},
     "mismatches": {
       "type": "array",

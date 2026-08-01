@@ -49,6 +49,7 @@ class SkillAssetTests(unittest.TestCase):
 
     def test_benchmark_template_is_evaluable(self) -> None:
         report = evaluate_benchmark(ASSETS / "benchmark-manifest.json")
+        self.assertFalse(report["valid"])
         self.assertFalse(report["temporal_validation"]["valid"])
         self.assertFalse(report["release_gates"]["closed_beta"]["passed"])
 

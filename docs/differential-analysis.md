@@ -40,6 +40,8 @@ nirvana spec classify differential-report.json <case-id> spec_ambiguity \
 
 The manifest's `[analysis]` table controls deterministic repeated runs and seeded JSON mutations. `repetitions` is at least two so the report can flag per-implementation flakes. `fuzz_cases` extends, but never replaces, the canonical JSONL corpus. Every generated case has a stable ID derived from its canonical input and `fuzz_seed`. Reports record both requested and generated fuzz counts and emit a warning when the finite mutation space cannot satisfy the requested budget.
 
+Report validity is fail-closed. `scheduled_executions` is the full case × implementation × repetition budget; `successful_executions` counts unblocked, non-timeout runs whose output the comparator can normalize. A non-zero return remains a valid observable outcome when its output is normalizable. If the execution counts differ, `valid` is false, `invalid_reasons` explains why, the CLI prints `INVALID` before any counts and exits `2`, and mismatch/agreement counts are diagnostic only. Invalid reports cannot enter attach, classification, or disclosure workflows.
+
 ## Minimize and feed back
 
 The minimizer reruns all implementations after every deterministic JSON reduction. It refuses non-divergent and flaky inputs rather than manufacturing a smaller-looking artifact.
@@ -57,7 +59,7 @@ The feedback artifact is a proposal. Nirvana never changes the specification or 
 
 ## Audit-pipeline integration
 
-`nirvana spec compare ... --run-directory <run>` or `nirvana spec attach` copies the report into the audit run, hashes it into the ledger, and emits one `H-DIFF-*` hypothesis plus localised evidence per mismatch. The hypothesis explicitly retains comparator correctness, implementation independence, specification intent, and security impact as unresolved assumptions. A differential report cannot raise the evidence ceiling.
+`nirvana spec compare ... --run-directory <run>` or `nirvana spec attach` copies a valid report into the audit run, hashes it into the ledger, and emits one `H-DIFF-*` hypothesis plus localised evidence per mismatch. Repeating the same attachment returns the existing hypotheses without appending duplicate ledger events. The hypothesis explicitly retains comparator correctness, implementation independence, specification intent, and security impact as unresolved assumptions. A differential report cannot raise the evidence ceiling.
 
 If review establishes a security-relevant implementation bug, ambiguity, or clear-but-unsafe specification, prepare a private packet:
 

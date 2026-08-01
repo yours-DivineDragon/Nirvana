@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.0")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.1")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -199,7 +199,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_commands = benchmark.add_subparsers(dest="benchmark_command", required=True)
     benchmark_evaluate = benchmark_commands.add_parser("evaluate")
     benchmark_evaluate.add_argument("manifest", type=Path)
-    benchmark_evaluate.add_argument("--output", type=Path, default=Path("benchmark-report.json"))
+    benchmark_evaluate.add_argument(
+        "--output",
+        type=Path,
+        help="report path; defaults to benchmark-report.json beside the manifest",
+    )
 
     deployment = commands.add_parser("deployment", help="verify local source/build bytecode against captured deployed bytecode")
     deployment_commands = deployment.add_subparsers(dest="deployment_command", required=True)
@@ -367,6 +371,17 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             report = compare(DifferentialManifest.load(args.manifest), runner)
             atomic_write_json(args.output.resolve(), report.to_dict())
+            if not report.valid:
+                print(
+                    "INVALID differential run: "
+                    f"blocked executions: {report.blocked_executions}; "
+                    f"successful executions: {report.successful_executions}/"
+                    f"{report.scheduled_executions}"
+                )
+                for reason in report.invalid_reasons:
+                    print(f"invalid: {reason}")
+                print(f"report: {args.output.resolve()}")
+                return 2
             if args.run_directory is not None:
                 attach_report(args.run_directory, args.output)
             print(args.output.resolve())
@@ -391,8 +406,19 @@ def main(argv: list[str] | None = None) -> int:
             print("private packet created; no disclosure was sent")
             return 0
         if args.command == "benchmark":
-            report = write_benchmark_report(args.manifest, args.output)
-            print(args.output.resolve())
+            output = (
+                args.output.resolve()
+                if args.output is not None
+                else args.manifest.resolve(strict=True).with_name("benchmark-report.json")
+            )
+            report = write_benchmark_report(args.manifest, output)
+            if not report["valid"]:
+                print("INVALID benchmark: temporal validation failed; metrics suppressed")
+                for violation in report["temporal_validation"]["violations"]:
+                    print(f"violation: {violation}")
+                print(f"report: {output}")
+                return 2
+            print(output)
             print(
                 f"precision: {report['metrics']['validated_precision']}; "
                 f"recall: {report['metrics']['ground_truth_recall']}"

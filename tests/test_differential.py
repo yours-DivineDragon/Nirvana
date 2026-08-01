@@ -18,6 +18,10 @@ class DifferentialTests(unittest.TestCase):
             CommandRunner(ExecutionPolicy(), ExecutionMode.DENY),
         )
         self.assertEqual(report.blocked_executions, 8)
+        self.assertEqual(report.scheduled_executions, 8)
+        self.assertEqual(report.successful_executions, 0)
+        self.assertFalse(report.valid)
+        self.assertIn("blocked by policy", " ".join(report.invalid_reasons))
         self.assertEqual(report.mismatches, [])
 
     def test_independent_implementations_surface_odd_rounding(self) -> None:
@@ -36,7 +40,10 @@ class DifferentialTests(unittest.TestCase):
             [item["language"] for item in report.implementations], ["python", "python"]
         )
         self.assertTrue(all(item["source_sha256"] for item in report.implementations))
-        self.assertEqual(report.to_dict()["schema_version"], "2.0.0")
+        self.assertEqual(report.to_dict()["schema_version"], "2.1.0")
+        self.assertTrue(report.valid)
+        self.assertEqual(report.successful_executions, report.scheduled_executions)
+        self.assertEqual(report.invalid_reasons, [])
         self.assertEqual(report.mismatches[0].input, {"value": 3})
         self.assertTrue(report.mismatches[0].outcomes[0].stdout_base64)
 
@@ -80,6 +87,26 @@ class DifferentialTests(unittest.TestCase):
             )
         )
 
+    def test_nonzero_normalized_result_remains_a_comparable_outcome(self) -> None:
+        manifest = DifferentialManifest.load(FIXTURE / "manifest.toml")
+        runner = CommandRunner(ExecutionPolicy(), ExecutionMode.DENY)
+
+        def observable_error(command, _cwd, _stdin):
+            return CommandResult(
+                command,
+                1 if command[-1] == "implementation_b.py" else 0,
+                b'{"error":"rejected"}\n',
+                b"",
+                1,
+            )
+
+        with patch.object(runner, "run", side_effect=observable_error):
+            report = compare(manifest, runner)
+
+        self.assertTrue(report.valid)
+        self.assertEqual(report.successful_executions, report.scheduled_executions)
+        self.assertTrue(report.mismatches)
+
     def test_fuzz_budget_shortfall_is_reported(self) -> None:
         manifest = replace(
             DifferentialManifest.load(FIXTURE / "manifest.toml"),
@@ -89,7 +116,12 @@ class DifferentialTests(unittest.TestCase):
         report = compare(manifest, CommandRunner(ExecutionPolicy(), ExecutionMode.DENY))
         self.assertEqual(report.requested_fuzz_case_count, 32)
         self.assertEqual(report.fuzz_case_count, 8)
-        self.assertIn("generated 8 of 32 requested fuzz cases", report.warnings[0])
+        self.assertTrue(
+            any(
+                "generated 8 of 32 requested fuzz cases" in warning
+                for warning in report.warnings
+            )
+        )
 
 
 if __name__ == "__main__":

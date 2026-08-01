@@ -133,6 +133,7 @@ class EvaluationTests(unittest.TestCase):
             path = Path(directory) / "benchmark.json"
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
+            self.assertTrue(report["valid"])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
             self.assertEqual(report["metrics"]["ground_truth_recall"], 1.0)
@@ -156,6 +157,7 @@ class EvaluationTests(unittest.TestCase):
             path = Path(directory) / "benchmark.json"
             path.write_text(json.dumps(manifest))
             report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
             self.assertFalse(report["temporal_validation"]["valid"])
             self.assertFalse(report["release_gates"]["closed_beta"]["passed"])
             self.assertIn("post-dates cutoff", " ".join(report["warnings"]))

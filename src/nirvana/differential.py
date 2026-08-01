@@ -180,9 +180,13 @@ class DifferentialReport:
     repetitions: int
     fuzz_seed: int
     mismatches: list[DifferentialMismatch]
+    valid: bool
+    scheduled_executions: int
+    successful_executions: int
     blocked_executions: int
     flaky_executions: int
     truncated_transcripts: int
+    invalid_reasons: list[str]
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -204,6 +208,9 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
     cases = corpus_cases + fuzzed
     mismatches: list[DifferentialMismatch] = []
     blocked = 0
+    successful = 0
+    timed_out = 0
+    normalization_failures = 0
     flaky = 0
     truncated = 0
     for case in cases:
@@ -224,6 +231,14 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                 error = result.blocked_reason or normalization_error
                 if result.timed_out:
                     error = "execution timed out"
+                    timed_out += 1
+                elif result.blocked_reason is None and normalization_error is not None:
+                    normalization_failures += 1
+                elif result.blocked_reason is None:
+                    # The return code is part of the observable contract. A
+                    # non-zero result with normalizable output can be a valid
+                    # implementation outcome (and often the divergence).
+                    successful += 1
                 observations.append((result.return_code, normalized, error))
             unique_observations = {
                 (return_code, normalized, error)
@@ -279,8 +294,28 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
         warnings.append(
             f"{truncated} implementation transcripts were truncated to {MAX_TRANSCRIPT_BYTES} bytes; full-stream hashes remain recorded"
         )
+    scheduled = len(cases) * len(manifest.implementations) * manifest.repetitions
+    invalid_reasons: list[str] = []
+    if blocked:
+        invalid_reasons.append(f"{blocked} scheduled executions were blocked by policy")
+    if timed_out:
+        invalid_reasons.append(f"{timed_out} scheduled executions timed out")
+    if normalization_failures:
+        invalid_reasons.append(
+            f"{normalization_failures} scheduled executions produced output the comparator could not normalize"
+        )
+    if successful != scheduled and not invalid_reasons:
+        invalid_reasons.append(
+            f"only {successful} of {scheduled} scheduled executions completed successfully"
+        )
+    valid = successful == scheduled
+    if not valid:
+        warnings.insert(
+            0,
+            "differential report is invalid; mismatch and agreement counts are diagnostic only",
+        )
     return DifferentialReport(
-        schema_version="2.0.0",
+        schema_version="2.1.0",
         created_at=utc_now(),
         spec_sha256=sha256_file(manifest.spec),
         corpus_sha256=sha256_file(manifest.corpus),
@@ -308,9 +343,13 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
         repetitions=manifest.repetitions,
         fuzz_seed=manifest.fuzz_seed,
         mismatches=mismatches,
+        valid=valid,
+        scheduled_executions=scheduled,
+        successful_executions=successful,
         blocked_executions=blocked,
         flaky_executions=flaky,
         truncated_transcripts=truncated,
+        invalid_reasons=invalid_reasons,
         warnings=warnings,
     )
 
@@ -481,6 +520,8 @@ def _load_cases(path: Path) -> list[dict[str, Any]]:
             cases.append(item)
     if len({str(item["id"]) for item in cases}) != len(cases):
         raise ValueError("corpus case ids must be unique")
+    if not cases:
+        raise ValueError("differential corpus must contain at least one case")
     return cases
 
 

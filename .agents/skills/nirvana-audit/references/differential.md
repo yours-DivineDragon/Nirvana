@@ -16,6 +16,8 @@ Prove normalization separately. Normalize only behavior the specification declar
 
 Set at least two repeated runs per implementation so flakes are not mistaken for semantic divergence. Use a fixed `fuzz_seed` and bounded `fuzz_cases` for deterministic JSON mutation; preserve the canonical corpus separately.
 
+The report is valid only when every scheduled execution runs to completion and produces normalizable output. Blocked, timed-out, or unnormalizable executions invalidate agreement and mismatch counts. A non-zero return with a valid normalized output remains part of the observable contract and may itself be the divergence. Preserve invalid reports for diagnosis, but do not attach, classify, or disclose them.
+
 ## Generate cases
 
 - Canonical examples and exact error cases
