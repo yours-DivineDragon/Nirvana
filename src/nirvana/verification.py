@@ -23,6 +23,18 @@ MAX_ASSERTIONS = 16
 MAX_HARNESS_FILES = 4_096
 MAX_HARNESS_BYTES = 100_000_000
 MAX_CONTROL_CHANGED_FILES = 64
+ADAPTER_CONTRACT_VERSIONS = {
+    "forge-test": 1,
+    "echidna": 1,
+    "medusa": 1,
+    "halmos": 1,
+    "cargo-test": 1,
+    "pytest": 1,
+    "node-test": 1,
+    "solc-ast": 1,
+    "slither": 1,
+    "semgrep": 1,
+}
 
 
 class ReplayMode(StrEnum):
@@ -38,6 +50,12 @@ class AssertionSource(StrEnum):
 class AssertionOperator(StrEnum):
     CONTAINS = "contains"
     JSON_POINTER_EQUALS = "json_pointer_equals"
+
+
+class AdapterOutcome(StrEnum):
+    SUCCESS = "success"
+    TEST_FAILURE = "test_failure"
+    INVALID = "invalid"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +207,7 @@ class NegativeControlExecution:
     changed_files: list[dict[str, str | None]]
     expected_return_codes: list[int]
     result: CommandResult
+    adapter_outcome: AdapterOutcome
     assertion_results: list[dict[str, Any]]
     invariant_results: list[dict[str, Any]]
 
@@ -202,6 +221,7 @@ class NegativeControlExecution:
             "expected_return_codes": list(self.expected_return_codes),
             "result": _result_payload(
                 self.result,
+                self.adapter_outcome,
                 self.assertion_results,
                 self.invariant_results,
             ),
@@ -295,7 +315,9 @@ class ExecutionRequest:
         _validate_adapter_contract(adapter, command, evidence_level)
         expected = value.get("expected_return_codes", [0])
         _validate_return_codes(expected, "expected_return_codes")
-        _validate_adapter_return_codes(adapter, expected, "expected_return_codes")
+        _validate_adapter_return_codes(
+            adapter, command, expected, "expected_return_codes"
+        )
         standard_input = value.get("stdin", "")
         if not isinstance(standard_input, str):
             raise ValueError("execution stdin must be a string")
@@ -382,6 +404,7 @@ class ExecutionRequest:
         if negative_control is not None:
             _validate_adapter_return_codes(
                 adapter,
+                command,
                 negative_control.expected_return_codes,
                 "negative control expected_return_codes",
             )
@@ -422,6 +445,14 @@ def resolve_execution_cwd(target_root: Path, relative: str) -> Path:
 
 def policy_sha256(runner: CommandRunner) -> str:
     return sha256_bytes(canonical_json(runner.policy).encode("utf-8"))
+
+
+def adapter_contract_id(adapter: str) -> str:
+    try:
+        version = ADAPTER_CONTRACT_VERSIONS[adapter]
+    except KeyError as error:
+        raise ValueError(f"unsupported execution adapter: {adapter}") from error
+    return f"{adapter}@{version}"
 
 
 def snapshot_harness(path: Path) -> HarnessSnapshot:
@@ -506,6 +537,7 @@ def evaluate_assertions(
 
 def result_is_accepted(
     result: CommandResult,
+    adapter_outcome: AdapterOutcome,
     expected_return_codes: list[int],
     assertion_results: list[dict[str, Any]],
     invariant_results: list[dict[str, Any]] | None = None,
@@ -513,6 +545,7 @@ def result_is_accepted(
     return (
         result.blocked_reason is None
         and not result.timed_out
+        and adapter_outcome is not AdapterOutcome.INVALID
         and result.return_code in expected_return_codes
         and bool(assertion_results)
         and all(item.get("passed") is True for item in assertion_results)
@@ -524,6 +557,7 @@ def result_is_accepted(
 
 def negative_control_is_accepted(
     result: CommandResult,
+    adapter_outcome: AdapterOutcome,
     expected_return_codes: list[int],
     assertion_results: list[dict[str, Any]],
     invariant_results: list[dict[str, Any]],
@@ -531,6 +565,7 @@ def negative_control_is_accepted(
     return (
         result.blocked_reason is None
         and not result.timed_out
+        and adapter_outcome is not AdapterOutcome.INVALID
         and result.return_code in expected_return_codes
         and bool(assertion_results)
         and all(item.get("error") is None for item in assertion_results)
@@ -563,7 +598,7 @@ def execution_receipt(
     negative_control: NegativeControlExecution | None = None,
 ) -> dict[str, Any]:
     receipt: dict[str, Any] = {
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "created_at": utc_now(),
         "evidence_id": request.evidence_id,
         "target": {
@@ -574,6 +609,7 @@ def execution_receipt(
             "mode": runner.mode.value,
             "policy_sha256": policy_sha256(runner),
             "docker_image": runner.policy.docker_image,
+            "adapter_contract": adapter_contract_id(request.adapter),
         },
         "harness": harness_snapshot.to_dict() if harness_snapshot is not None else None,
         "negative_control": (
@@ -586,6 +622,7 @@ def execution_receipt(
         },
         "result": _result_payload(
             result,
+            classify_adapter_outcome(request, result),
             assertion_results,
             control_invariant_results,
         ),
@@ -599,11 +636,13 @@ def execution_receipt(
 
 def _result_payload(
     result: CommandResult,
+    adapter_outcome: AdapterOutcome,
     assertion_results: list[dict[str, Any]],
     control_invariant_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         **result_signature(result),
+        "adapter_outcome": adapter_outcome.value,
         "command": list(result.command),
         "stdout_base64": base64.b64encode(result.stdout).decode("ascii"),
         "stderr_base64": base64.b64encode(result.stderr).decode("ascii"),
@@ -666,13 +705,173 @@ def _validate_return_codes(value: Any, label: str) -> None:
 
 
 def _validate_adapter_return_codes(
-    adapter: str, value: list[int], label: str
+    adapter: str, command: list[str], value: list[int], label: str
 ) -> None:
-    if adapter == "pytest" and value[0] not in {0, 1}:
+    allowed: dict[str, set[int]] = {
+        "forge-test": {0, 1},
+        "echidna": {0, 1},
+        "medusa": {0, 7},
+        "halmos": {0, 1},
+        "cargo-test": {0, 101},
+        "pytest": {0, 1},
+        "node-test": {0, 1},
+    }
+    if adapter not in allowed or value[0] in allowed[adapter]:
+        pass
+    else:
+        if adapter == "pytest":
+            raise ValueError(
+                f"pytest {label} must be 0 or 1; collection, interruption, usage, "
+                "and infrastructure exit states cannot prove a fix"
+            )
+        rendered = ", ".join(str(item) for item in sorted(allowed[adapter]))
         raise ValueError(
-            f"pytest {label} must be 0 or 1; "
-            "collection, interruption, usage, and infrastructure exit states cannot prove a fix"
+            f"{adapter} {label} must be one of {rendered}; "
+            "other exit states represent unsupported or infrastructure outcomes"
         )
+
+    executable = Path(command[0]).name.lower()
+    arguments = [item.lower() for item in command[1:]]
+    if adapter == "cargo-test" and value[0] == 101:
+        if _option_value(arguments, "--message-format") != "json":
+            raise ValueError(
+                f"cargo-test {label} 101 requires --message-format=json so Nirvana "
+                "can distinguish a test failure from a build or tool failure"
+            )
+    if adapter == "echidna" and value[0] == 1:
+        if _option_value(arguments, "--format") != "json":
+            raise ValueError(
+                f"echidna {label} 1 requires --format=json so Nirvana can verify "
+                "that a property, rather than the tool, failed"
+            )
+    if adapter == "node-test" and value[0] == 1:
+        if executable != "node":
+            raise ValueError(
+                f"node-test {label} 1 requires native node --test; package-manager "
+                "wrapper failures are ambiguous"
+            )
+        if _option_value(arguments, "--test-reporter") != "tap":
+            raise ValueError(
+                f"node-test {label} 1 requires --test-reporter=tap so Nirvana can "
+                "verify that tests actually failed"
+            )
+
+
+def classify_adapter_outcome(
+    request: ExecutionRequest, result: CommandResult
+) -> AdapterOutcome:
+    if (
+        result.blocked_reason is not None
+        or result.timed_out
+        or result.return_code is None
+    ):
+        return AdapterOutcome.INVALID
+    if result.return_code == 0:
+        return AdapterOutcome.SUCCESS
+    if request.evidence_level is EvidenceLevel.STRUCTURALLY_CONFIRMED:
+        return AdapterOutcome.INVALID
+
+    text = _combined_result_text(result)
+    if request.adapter == "pytest" and result.return_code == 1:
+        return AdapterOutcome.TEST_FAILURE
+    if request.adapter == "medusa" and result.return_code == 7:
+        return AdapterOutcome.TEST_FAILURE
+    if request.adapter == "forge-test" and result.return_code == 1:
+        if _summary_reports_failures(
+            text,
+            r"Suite result:\s*FAILED\.\s*\d+ passed;\s*(\d+) failed;",
+        ):
+            return AdapterOutcome.TEST_FAILURE
+    if request.adapter == "cargo-test" and result.return_code == 101:
+        if _cargo_build_succeeded(result.stdout) and _summary_reports_failures(
+            text,
+            r"test result:\s*FAILED\.\s*\d+ passed;\s*(\d+) failed;",
+        ):
+            return AdapterOutcome.TEST_FAILURE
+    if request.adapter == "node-test" and result.return_code == 1:
+        tests = _last_summary_count(text, r"(?m)^# tests (\d+)\s*$")
+        failures = _last_summary_count(text, r"(?m)^# fail (\d+)\s*$")
+        if tests is not None and tests > 0 and failures is not None and failures > 0:
+            return AdapterOutcome.TEST_FAILURE
+    if request.adapter == "echidna" and result.return_code == 1:
+        if _echidna_reports_property_failure(result.stdout):
+            return AdapterOutcome.TEST_FAILURE
+    if request.adapter == "halmos" and result.return_code == 1:
+        if _summary_reports_failures(
+            text,
+            r"Symbolic test result:\s*\d+ passed;\s*(\d+) failed;",
+        ):
+            return AdapterOutcome.TEST_FAILURE
+    return AdapterOutcome.INVALID
+
+
+def _combined_result_text(result: CommandResult) -> str:
+    return "\n".join(
+        (
+            result.stdout.decode("utf-8", errors="replace"),
+            result.stderr.decode("utf-8", errors="replace"),
+        )
+    )
+
+
+def _summary_reports_failures(text: str, pattern: str) -> bool:
+    return any(int(match.group(1)) > 0 for match in re.finditer(pattern, text))
+
+
+def _last_summary_count(text: str, pattern: str) -> int | None:
+    matches = list(re.finditer(pattern, text))
+    return int(matches[-1].group(1)) if matches else None
+
+
+def _cargo_build_succeeded(stdout: bytes) -> bool:
+    build_results: list[bool] = []
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(value, dict)
+            and value.get("reason") == "build-finished"
+            and isinstance(value.get("success"), bool)
+        ):
+            build_results.append(value["success"])
+    return bool(build_results) and all(build_results)
+
+
+def _echidna_reports_property_failure(stdout: bytes) -> bool:
+    try:
+        value = json.loads(stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if (
+        not isinstance(value, dict)
+        or value.get("success") is not True
+        or value.get("error") is not None
+        or not isinstance(value.get("tests"), list)
+        or not value["tests"]
+    ):
+        return False
+    statuses = [
+        item.get("status")
+        for item in value["tests"]
+        if isinstance(item, dict)
+    ]
+    return (
+        len(statuses) == len(value["tests"])
+        and "error" not in statuses
+        and any(status in {"solved", "shrinking"} for status in statuses)
+    )
+
+
+def _option_value(arguments: list[str], option: str) -> str | None:
+    prefix = option + "="
+    for index, argument in enumerate(arguments):
+        if argument.startswith(prefix):
+            return argument[len(prefix) :]
+        if argument == option and index + 1 < len(arguments):
+            return arguments[index + 1]
+    return None
 
 
 def _safe_relative_path(value: Any) -> bool:
@@ -707,7 +906,11 @@ def _validate_adapter_contract(
             and len(arguments) >= 2
             and arguments[:2] == ["-m", "pytest"]
         ),
-        "node-test": executable in {"npm", "pnpm", "yarn"} and "test" in arguments,
+        "node-test": (
+            executable == "node" and "--test" in arguments
+        ) or (
+            executable in {"npm", "pnpm", "yarn"} and "test" in arguments
+        ),
     }
     structural_adapters: dict[str, bool] = {
         "solc-ast": executable in {"solc", "solcjs"} and "--standard-json" in arguments,

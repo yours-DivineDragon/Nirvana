@@ -10,11 +10,14 @@ from .models import EVIDENCE_RANK, EvidenceLevel, EvidenceRecord, Finding, Hypot
 from .policy import CommandRunner, ExecutionMode
 from .util import atomic_write_json, sha256_file
 from .verification import (
+    AdapterOutcome,
     ExecutionRequest,
     HarnessSnapshot,
     MAX_CONTROL_CHANGED_FILES,
     NegativeControlExecution,
     ReplayMode,
+    adapter_contract_id,
+    classify_adapter_outcome,
     evaluate_assertions,
     execution_receipt,
     load_receipt,
@@ -102,6 +105,7 @@ class HypothesisBoard:
         )
         cwd = resolve_execution_cwd(target_root, request.cwd)
         result = self._run_request(runner, request, cwd, harness_root)
+        adapter_outcome = classify_adapter_outcome(request, result)
         assertion_results = evaluate_assertions(request, result)
         invariant_results = evaluate_assertions(
             request, result, request.control_invariants
@@ -116,6 +120,9 @@ class HypothesisBoard:
             control_result = self._run_request(
                 runner, request, control_cwd, harness_root
             )
+            control_adapter_outcome = classify_adapter_outcome(
+                request, control_result
+            )
             control_assertions = evaluate_assertions(request, control_result)
             control_invariants = evaluate_assertions(
                 request, control_result, request.control_invariants
@@ -125,6 +132,7 @@ class HypothesisBoard:
             )
             control_accepted = negative_control_is_accepted(
                 control_result,
+                control_adapter_outcome,
                 request.negative_control.expected_return_codes,
                 control_assertions,
                 control_invariants,
@@ -137,6 +145,7 @@ class HypothesisBoard:
                     request.negative_control.expected_return_codes
                 ),
                 result=control_result,
+                adapter_outcome=control_adapter_outcome,
                 assertion_results=control_assertions,
                 invariant_results=control_invariants,
             )
@@ -157,6 +166,7 @@ class HypothesisBoard:
         if (
             not result_is_accepted(
                 result,
+                adapter_outcome,
                 request.expected_return_codes,
                 assertion_results,
                 invariant_results,
@@ -178,6 +188,8 @@ class HypothesisBoard:
                 result.blocked_reason,
                 result.timed_out,
                 result.return_code,
+                request.adapter,
+                adapter_outcome,
                 request.expected_return_codes,
                 target_unchanged,
                 assertion_results,
@@ -189,6 +201,11 @@ class HypothesisBoard:
                     negative_control.invariant_results
                     if negative_control is not None
                     else []
+                ),
+                control_adapter_outcome=(
+                    negative_control.adapter_outcome
+                    if negative_control is not None
+                    else AdapterOutcome.SUCCESS
                 ),
             )
             self.ledger.append(
@@ -294,6 +311,10 @@ class HypothesisBoard:
             raise ValueError("replay execution mode differs from the original execution")
         if recorded_runner.get("policy_sha256") != policy_sha256(runner):
             raise ValueError("replay policy differs from the original execution")
+        if recorded_runner.get("adapter_contract") != adapter_contract_id(
+            request.adapter
+        ):
+            raise ValueError("replay adapter contract differs from the original execution")
         self._require_target_snapshot(scope, target_root)
         control = self._prepare_negative_control(
             request, hypothesis, scope, target_root
@@ -310,6 +331,7 @@ class HypothesisBoard:
 
         cwd = resolve_execution_cwd(target_root, request.cwd)
         result = self._run_request(runner, request, cwd, harness_root)
+        adapter_outcome = classify_adapter_outcome(request, result)
         assertion_results = evaluate_assertions(request, result)
         invariant_results = evaluate_assertions(
             request, result, request.control_invariants
@@ -324,6 +346,9 @@ class HypothesisBoard:
             control_result = self._run_request(
                 runner, request, control_cwd, harness_root
             )
+            control_adapter_outcome = classify_adapter_outcome(
+                request, control_result
+            )
             control_assertions = evaluate_assertions(request, control_result)
             control_invariants = evaluate_assertions(
                 request, control_result, request.control_invariants
@@ -333,6 +358,7 @@ class HypothesisBoard:
             )
             control_accepted = negative_control_is_accepted(
                 control_result,
+                control_adapter_outcome,
                 request.negative_control.expected_return_codes,
                 control_assertions,
                 control_invariants,
@@ -345,6 +371,7 @@ class HypothesisBoard:
                     request.negative_control.expected_return_codes
                 ),
                 result=control_result,
+                adapter_outcome=control_adapter_outcome,
                 assertion_results=control_assertions,
                 invariant_results=control_invariants,
             )
@@ -441,6 +468,7 @@ class HypothesisBoard:
         verified = (
             result_is_accepted(
                 result,
+                adapter_outcome,
                 request.expected_return_codes,
                 assertion_results,
                 invariant_results,
@@ -462,6 +490,7 @@ class HypothesisBoard:
             "replay_artifact_path": str(replay_artifact),
             "replay_artifact_sha256": replay_digest,
             "result": current_signature,
+            "adapter_outcome": adapter_outcome.value,
             "assertions": assertion_results,
             "control_invariants": invariant_results,
             "control_invariant_decision_matches": (
@@ -477,6 +506,7 @@ class HypothesisBoard:
                 {
                     "snapshot_sha256": negative_control.snapshot_sha256,
                     "result": result_signature(negative_control.result),
+                    "adapter_outcome": negative_control.adapter_outcome.value,
                     "assertions": negative_control.assertion_results,
                     "control_invariants": negative_control.invariant_results,
                     "accepted": control_accepted,
@@ -933,6 +963,8 @@ class HypothesisBoard:
         blocked_reason: str | None,
         timed_out: bool,
         return_code: int | None,
+        adapter: str,
+        adapter_outcome: AdapterOutcome,
         expected_return_codes: list[int],
         target_unchanged: bool,
         assertion_results: list[dict[str, Any]],
@@ -942,6 +974,7 @@ class HypothesisBoard:
         control_unchanged: bool = True,
         control_accepted: bool = True,
         control_invariant_results: list[dict[str, Any]] | None = None,
+        control_adapter_outcome: AdapterOutcome = AdapterOutcome.SUCCESS,
     ) -> str:
         if blocked_reason is not None:
             return f"execution was blocked: {blocked_reason}"
@@ -955,6 +988,11 @@ class HypothesisBoard:
             return (
                 f"execution returned {return_code}; expected exactly "
                 f"{expected_return_codes[0]}"
+            )
+        if adapter_outcome is AdapterOutcome.INVALID:
+            return (
+                f"execution result does not satisfy the {adapter} adapter outcome contract; "
+                "an infrastructure or tool failure cannot prove the claim"
             )
         failed = [
             str(item.get("assertion_id"))
@@ -975,6 +1013,11 @@ class HypothesisBoard:
             )
         if not control_unchanged:
             return "execution changed the negative control target snapshot"
+        if control_adapter_outcome is AdapterOutcome.INVALID:
+            return (
+                f"negative control result does not satisfy the {adapter} adapter outcome "
+                "contract; breaking the verifier cannot prove a fix"
+            )
         failed_control_invariants = [
             str(item.get("assertion_id"))
             for item in (control_invariant_results or [])

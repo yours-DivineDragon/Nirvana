@@ -15,18 +15,19 @@
     "result"
   ],
   "properties": {
-    "schema_version": {"const": "1.3.0"},
+    "schema_version": {"const": "1.4.0"},
     "created_at": {"type": "string"},
     "evidence_id": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"},
     "replay_of": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "target": {"$ref": "#/$defs/target"},
     "runner": {
       "type": "object",
-      "required": ["mode", "policy_sha256", "docker_image"],
+      "required": ["mode", "policy_sha256", "docker_image", "adapter_contract"],
       "properties": {
         "mode": {"enum": ["deny", "host", "docker"]},
         "policy_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "docker_image": {"type": ["string", "null"]}
+        "docker_image": {"type": ["string", "null"]},
+        "adapter_contract": {"type": "string", "pattern": "^[A-Za-z0-9._-]+@[0-9]+$"}
       },
       "additionalProperties": false
     },
@@ -144,6 +145,7 @@
       "type": "object",
       "required": [
         "command",
+        "adapter_outcome",
         "return_code",
         "stdout_sha256",
         "stderr_sha256",
@@ -157,6 +159,7 @@
       ],
       "properties": {
         "command": {"type": "array", "items": {"type": "string"}},
+        "adapter_outcome": {"enum": ["success", "test_failure", "invalid"]},
         "return_code": {"type": ["integer", "null"]},
         "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},

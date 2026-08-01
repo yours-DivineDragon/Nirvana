@@ -233,7 +233,15 @@ class BoardTests(unittest.TestCase):
                 self.assertEqual(evidence.source, "nirvana:command-runner")
                 self.assertTrue(evidence.metadata["runner_minted"])
                 receipt = json.loads(Path(evidence.artifact_path).read_text())
-                self.assertEqual(receipt["schema_version"], "1.3.0")
+                self.assertEqual(receipt["schema_version"], "1.4.0")
+                self.assertEqual(
+                    receipt["runner"]["adapter_contract"], "pytest@1"
+                )
+                self.assertEqual(receipt["result"]["adapter_outcome"], "test_failure")
+                self.assertEqual(
+                    receipt["negative_control"]["result"]["adapter_outcome"],
+                    "success",
+                )
                 self.assertTrue(
                     receipt["result"]["control_invariants"][0]["passed"]
                 )
@@ -385,6 +393,56 @@ class BoardTests(unittest.TestCase):
 
             self.assertNotIn(
                 "E-BROKEN-CONTROL",
+                {
+                    record["payload"].get("evidence", {}).get("evidence_id")
+                    for record in board.ledger.records()
+                    if record["payload"].get("event") == "evidence_recorded"
+                },
+            )
+
+    def test_adapter_outcome_blocks_a_broken_control_with_a_weak_invariant(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = audit(FIXTURE, root / "runs")
+            command = ["forge", "test"]
+            request_path = root / "request.json"
+            request_path.write_text(
+                json.dumps(
+                    self.execution_request(
+                        result.hypotheses[0],
+                        "E-INVALID-OUTCOME",
+                        command,
+                        "violation",
+                        adapter="forge-test",
+                        control_expected_return_code=1,
+                    )
+                )
+            )
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            positive = CommandResult(
+                command, 0, b"violation\nverifier healthy\n", b"", 1
+            )
+            broken_control = CommandResult(
+                command,
+                1,
+                b"verifier healthy\n",
+                b"Compiler run failed: ParserError\n",
+                1,
+            )
+            board = HypothesisBoard(result.run_directory)
+            with patch.object(
+                runner, "run", side_effect=[positive, broken_control]
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "breaking the verifier cannot prove a fix"
+                ):
+                    board.execute_evidence(request_path, runner)
+
+            self.assertNotIn(
+                "E-INVALID-OUTCOME",
                 {
                     record["payload"].get("evidence", {}).get("evidence_id")
                     for record in board.ledger.records()
