@@ -144,9 +144,8 @@ class AdjudicationVariantTests(unittest.TestCase):
                 result.run_directory, corpus, "2025-01-01T00:00:00Z"
             )
             self.assertTrue(variants)
-            self.assertTrue(
-                {item.generator for item in variants}
-                & {"historical-variant-miner", "retrieval-analogy"}
+            self.assertEqual(
+                {item.generator for item in variants}, {"retrieval-analogy"}
             )
 
 

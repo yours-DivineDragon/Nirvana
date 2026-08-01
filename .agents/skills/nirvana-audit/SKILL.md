@@ -54,7 +54,7 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
    ```
 
 4. Parallelize only independent flows or hypotheses. Do not ask several identical agents the same question and call their agreement independent evidence.
-5. Use graph-query, attacker-sequence, specification-inference, test-gap, historical-variant, retrieval-analogy, and differential candidates only as hypotheses. Retrieved analogies are never evidence.
+5. Use graph-query, attacker-sequence, specification-inference, test-gap, historical-variant, retrieval-analogy, and differential candidates only as hypotheses. Retrieved analogies are never evidence. A provenance template produces one historical or retrieval candidate, never a mirrored pair.
 
 ## Verify by the cheapest suitable evaluator
 
@@ -115,19 +115,21 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 
 Read `references/differential.md` fully. Generate implementations in isolated sessions/workspaces, pin the same specification, prevent cross-reading, and record source files, language, producer/model/prompt provenance, and tool version before `nirvana spec compare`. Use repeated runs and a seeded fuzz budget.
 
-1. Attach the report during compare with `--run-directory`, or use `nirvana spec attach`. Attached mismatches become localised hypotheses only.
-2. Reproduce and delta-minimize every stable mismatch with `nirvana spec minimize`.
-3. Rule out harness defects, then persist exactly one of the four classes with `nirvana spec classify`.
-4. Use `nirvana spec feedback` to produce a review-only prose amendment and regression case. Do not silently edit the source specification.
-5. Use `nirvana disclose prepare` only to create a private packet. It never sends anything; recipient, embargo, and publication decisions remain human-controlled.
-6. Agreement is not proof, and a clear but unsafe specification requires design review rather than majority voting.
+1. Inspect the report's `valid`, `scheduled_executions`, `successful_executions`, and `invalid_reasons` fields before interpreting mismatch counts. Any blocked, timed-out, or unnormalizable execution makes the report invalid; the CLI exits nonzero and an invalid report cannot be attached, classified, or disclosed. A non-zero return with normalizable output remains a comparable observable outcome.
+2. Attach a valid report during compare with `--run-directory`, or use `nirvana spec attach`. Attached mismatches become localised hypotheses only. Repeating the same attachment is idempotent and returns the existing hypotheses.
+3. Reproduce and delta-minimize every stable mismatch with `nirvana spec minimize`.
+4. Rule out harness defects, then persist exactly one of the four classes with `nirvana spec classify`.
+5. Use `nirvana spec feedback` to produce a review-only prose amendment and regression case. Do not silently edit the source specification.
+6. Use `nirvana disclose prepare` only to create a private packet. It never sends anything; recipient, embargo, and publication decisions remain human-controlled.
+7. Agreement is not proof, and a clear but unsafe specification requires design review rather than majority voting.
 
 ## Evaluate claims
 
 1. Use `nirvana benchmark evaluate` only with a blind, temporally separated manifest that records cutoffs, corpora, last-vulnerable commits, hidden-variant transforms, ground truth, trials, prompts, models, tools, budgets, transcripts, environments, costs, and coverage.
 2. Block issue text, audit reports, fixes, and other ground-truth material during trials. A post-cutoff training/retrieval/rule corpus invalidates the temporal evaluation.
-3. Report undefined metrics as undefined. Do not turn a missing denominator into zero or success.
-4. Populate `release_evidence` rather than inferring maturity from tool names. Attach a retained, hash-verified `evidence_artifacts` entry for every non-statistical gate; booleans alone do not establish maturity. Claim a release stage only when its generated gate passes. Closed beta additionally requires at least 80% validated precision and 90% high/critical precision on the blind temporal suite, with recall reported.
+3. Treat a nonzero CLI exit or report-level `valid: false` as a failed evaluation. Read every temporal violation. Metrics retained in an invalid report are diagnostic only; the CLI suppresses them and they must never be quoted as benchmark results.
+4. Report undefined metrics as undefined. Do not turn a missing denominator into zero or success.
+5. Populate `release_evidence` rather than inferring maturity from tool names. Attach a retained, hash-verified `evidence_artifacts` entry for every non-statistical gate; booleans alone do not establish maturity. Claim a release stage only when its generated gate passes. Closed beta additionally requires at least 80% validated precision and 90% high/critical precision on the blind temporal suite, with recall reported.
 
 ## Report the audit
 

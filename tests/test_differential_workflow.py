@@ -38,6 +38,18 @@ class DifferentialWorkflowTests(unittest.TestCase):
             hypotheses = attach_report(audit_result.run_directory, report_path)
             self.assertEqual(len(hypotheses), 1)
             self.assertEqual(hypotheses[0].generator, "differential-analysis")
+            records_after_first_attachment = len(
+                (audit_result.run_directory / "evidence.jsonl").read_text().splitlines()
+            )
+            repeated = attach_report(audit_result.run_directory, report_path)
+            self.assertEqual(
+                [item.hypothesis_id for item in repeated],
+                [item.hypothesis_id for item in hypotheses],
+            )
+            self.assertEqual(
+                len((audit_result.run_directory / "evidence.jsonl").read_text().splitlines()),
+                records_after_first_attachment,
+            )
 
             triage_path = root / "triage.json"
             triage = classify_mismatch(
@@ -96,6 +108,19 @@ class DifferentialWorkflowTests(unittest.TestCase):
             self.assertFalse(packet["handling"]["automatic_delivery"])
             self.assertEqual(packet["classification"], "spec_ambiguity")
             self.assertEqual(len(packet["normalized_outputs"]), 2)
+
+    def test_invalid_report_cannot_enter_the_run_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = compare(
+                DifferentialManifest.load(DIFF_FIXTURE / "manifest.toml"),
+                CommandRunner(ExecutionPolicy(), ExecutionMode.DENY),
+            )
+            report_path = root / "invalid-report.json"
+            atomic_write_json(report_path, report)
+            audit_result = audit(EVM_FIXTURE, root / "runs")
+            with self.assertRaisesRegex(ValueError, "report is invalid"):
+                attach_report(audit_result.run_directory, report_path)
 
 
 if __name__ == "__main__":

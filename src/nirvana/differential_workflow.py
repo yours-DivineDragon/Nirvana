@@ -30,14 +30,26 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
     records = ledger.records()
     ledger.verify()
     report = load_differential_report(report_path)
+    _require_valid_report(report)
     source = report_path.resolve(strict=True)
     digest = sha256_file(source)
-    if any(
-        record["payload"].get("event") == "differential_report_attached"
-        and record["payload"].get("artifact_sha256") == digest
-        for record in records
-    ):
-        raise ValueError("differential report is already attached to this run")
+    existing_attachment = next(
+        (
+            record["payload"]
+            for record in records
+            if record["payload"].get("event") == "differential_report_attached"
+            and record["payload"].get("source_sha256") == digest
+        ),
+        None,
+    )
+    if existing_attachment is not None:
+        attached_path = Path(str(existing_attachment["artifact_path"])).resolve(
+            strict=True
+        )
+        attached_digest = str(existing_attachment["artifact_sha256"])
+        if sha256_file(attached_path) != attached_digest:
+            raise ValueError("previously attached differential report no longer matches the ledger")
+        return _attached_hypotheses(records, report, attached_digest)
     attached_path = run_root / "differential" / f"report-{digest[:16]}.json"
     atomic_write_json(attached_path, report)
     attached_digest = sha256_file(attached_path)
@@ -53,6 +65,7 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
             "manifest_sha256": report["manifest_sha256"],
             "case_count": report["case_count"],
             "mismatch_count": len(report["mismatches"]),
+            "valid": True,
         }
     ]
     existing_ids = {
@@ -61,15 +74,7 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
         if record["payload"].get("event") == "hypothesis_proposed"
     }
     for mismatch in report["mismatches"]:
-        identity = sha256_bytes(
-            canonical_json(
-                {
-                    "report": attached_digest,
-                    "case_id": mismatch["case_id"],
-                    "input": mismatch["input_sha256"],
-                }
-            ).encode()
-        )
+        identity = _differential_identity(attached_digest, mismatch)
         hypothesis_id = f"H-DIFF-{identity[:16]}"
         if hypothesis_id in existing_ids:
             continue
@@ -164,6 +169,7 @@ def classify_mismatch(
     if not rationale or any(not item.strip() for item in rationale):
         raise ValueError("mismatch classification requires a non-empty rationale")
     report = load_differential_report(report_path)
+    _require_valid_report(report)
     matches = [item for item in report["mismatches"] if str(item["case_id"]) == case_id]
     if len(matches) != 1:
         raise ValueError(f"differential mismatch is not uniquely available: {case_id}")
@@ -243,6 +249,7 @@ def prepare_disclosure_packet(
     run_directory: Path | None = None,
 ) -> dict[str, Any]:
     report = load_differential_report(report_path)
+    _require_valid_report(report)
     triage = _validated_json(triage_path, "differential-triage.schema.json")
     minimized = _validated_json(
         minimization_path, "differential-minimization.schema.json"
@@ -322,6 +329,55 @@ def _validated_json(path: Path, schema: str) -> dict[str, Any]:
         raise ValueError(f"{schema} artifact must be one JSON object")
     validate_contract(value, schema)
     return value
+
+
+def _require_valid_report(report: dict[str, Any]) -> None:
+    if report["valid"] is True:
+        return
+    reasons = "; ".join(str(item) for item in report["invalid_reasons"])
+    raise ValueError(
+        "differential report is invalid and cannot enter the hypothesis, triage, "
+        f"or disclosure pipeline: {reasons}"
+    )
+
+
+def _attached_hypotheses(
+    records: list[dict[str, Any]], report: dict[str, Any], attached_digest: str
+) -> list[Hypothesis]:
+    expected_ids = {
+        f"H-DIFF-{_differential_identity(attached_digest, mismatch)[:16]}"
+        for mismatch in report["mismatches"]
+    }
+    existing = {
+        str(record["payload"]["hypothesis"]["hypothesis_id"]): Hypothesis.from_dict(
+            record["payload"]["hypothesis"]
+        )
+        for record in records
+        if record["payload"].get("event") == "hypothesis_proposed"
+        and str(record["payload"]["hypothesis"].get("hypothesis_id"))
+        in expected_ids
+    }
+    missing = expected_ids - existing.keys()
+    if missing:
+        raise ValueError(
+            "differential attachment ledger is incomplete for hypotheses: "
+            f"{sorted(missing)}"
+        )
+    return [existing[item] for item in sorted(expected_ids)]
+
+
+def _differential_identity(
+    attached_digest: str, mismatch: dict[str, Any]
+) -> str:
+    return sha256_bytes(
+        canonical_json(
+            {
+                "report": attached_digest,
+                "case_id": mismatch["case_id"],
+                "input": mismatch["input_sha256"],
+            }
+        ).encode()
+    )
 
 
 def _append_artifact_event(

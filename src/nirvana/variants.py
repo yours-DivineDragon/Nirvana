@@ -119,6 +119,7 @@ def _issue_template(issue: dict[str, Any]) -> dict[str, Any]:
         "security_property": issue["security_property"],
         "attacker_capabilities": issue["attacker_prerequisites"],
         "provenance": f"{issue['provenance']} (published {issue['published_at']})",
+        "retrieval": True,
     }
 
 

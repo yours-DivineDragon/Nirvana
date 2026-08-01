@@ -466,39 +466,52 @@ def graph_hypotheses(
             if keywords and not any(keyword in labels or keyword in node.label.lower() for keyword in keywords):
                 continue
             template_id = str(template.get("id", "historical-variant"))
+            retrieval = template.get("retrieval") is True
             _append_candidate(
                 generated,
                 existing_fingerprints,
-                generator="historical-variant-miner",
+                generator=("retrieval-analogy" if retrieval else "historical-variant-miner"),
                 lens=str(template.get("threat_lens", "variant")),
                 prop=str(template.get("security_property", "A historically broken security assumption must not recur")),
-                violation=f"{node.label} matches the semantic cues of template {template_id}",
+                violation=(
+                    f"A provenance-bearing analogy ({template_id}) suggests reviewing {node.label}"
+                    if retrieval
+                    else f"{node.label} matches the semantic cues of template {template_id}"
+                ),
                 location=location,
-                assets=["historical variant surface"],
+                assets=[
+                    "retrieval-guided review surface"
+                    if retrieval
+                    else "historical variant surface"
+                ],
                 capabilities=[str(item) for item in template.get("attacker_capabilities", ["reach the candidate path"])],
-                assumptions=["retrieved analogies guide validation and are not evidence"],
-                graph_slice=[node.node_id, *[child.node_id for child in children[:8]]],
-                plan=["compare root-cause graph rather than report wording", "prove path feasibility", "construct a benign negative case"],
-            )
-            provenance = str(template.get("provenance", ""))
-            if provenance:
-                _append_candidate(
-                    generated,
-                    existing_fingerprints,
-                    generator="retrieval-analogy",
-                    lens=str(template.get("threat_lens", "retrieval")),
-                    prop=str(template.get("security_property", "Retrieved analogies must be independently validated")),
-                    violation=f"A provenance-bearing analogy ({template_id}) suggests reviewing {node.label}",
-                    location=location,
-                    assets=["retrieval-guided review surface"],
-                    capabilities=["satisfy the historical template prerequisites"],
-                    assumptions=[
-                        f"retrieval provenance: {provenance}",
+                assumptions=(
+                    [
+                        f"retrieval provenance: {template.get('provenance', 'unrecorded')}",
                         "retrieval is never evidence and must be disabled when it reveals blind-benchmark ground truth",
-                    ],
-                    graph_slice=[node.node_id, f"retrieval:{template_id}"],
-                    plan=["exclude the source from temporal blind evaluation if post-cutoff", "compare causal graphs", "verify independently without relying on the retrieved report"],
-                )
+                    ]
+                    if retrieval
+                    else ["historical semantic matches guide validation and are not evidence"]
+                ),
+                graph_slice=(
+                    [node.node_id, f"retrieval:{template_id}"]
+                    if retrieval
+                    else [node.node_id, *[child.node_id for child in children[:8]]]
+                ),
+                plan=(
+                    [
+                        "exclude the source from temporal blind evaluation if post-cutoff",
+                        "compare causal graphs",
+                        "verify independently without relying on the retrieved report",
+                    ]
+                    if retrieval
+                    else [
+                        "compare root-cause graph rather than report wording",
+                        "prove path feasibility",
+                        "construct a benign negative case",
+                    ]
+                ),
+            )
     return generated
 
 
@@ -629,7 +642,12 @@ def _hypothesis_fingerprint(
                 "property": _normalise_words(prop),
                 "violation": _normalise_words(violation),
                 "locations": [
-                    (item.path, item.line_start, item.line_end, item.symbol)
+                    (
+                        item.path,
+                        item.symbol,
+                        None if item.symbol else item.line_start,
+                        None if item.symbol else item.line_end,
+                    )
                     for item in locations
                 ],
             }

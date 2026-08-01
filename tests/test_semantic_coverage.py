@@ -131,7 +131,7 @@ class SemanticCoverageTests(unittest.TestCase):
             self.assertIn("semantic-graph-query", generators)
             self.assertIn("test-gap-analysis", generators)
             self.assertIn("historical-variant-miner", generators)
-            self.assertIn("retrieval-analogy", generators)
+            self.assertNotIn("retrieval-analogy", generators)
 
             coverage = CoverageBoard(result.run_directory).load()
             self.assertTrue(coverage.flows)
