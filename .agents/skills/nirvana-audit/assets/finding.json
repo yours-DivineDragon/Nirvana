@@ -1,0 +1,22 @@
+{
+  "finding_id": "F-REPLACE-ME",
+  "hypothesis_id": "H-REPLACE-ME",
+  "title": "Concise root-cause title",
+  "severity": "medium",
+  "evidence_level": "executable",
+  "security_property": "State the violated property",
+  "root_cause": "State the exact implementation or design defect",
+  "locations": [
+    {"path": "src/Contract.sol", "line_start": 1, "line_end": 1, "symbol": null}
+  ],
+  "attacker_prerequisites": [],
+  "assumptions": [],
+  "causal_path": [],
+  "reproducer": "Path or identifier of the minimal reproducer",
+  "impact": "Observable security impact",
+  "reproduction_instructions": [],
+  "remediation": "Root-cause remediation",
+  "regression_test": "Test proving the fix",
+  "novelty": "uncertain_novelty",
+  "related_issues": []
+}

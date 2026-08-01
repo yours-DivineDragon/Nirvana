@@ -1,0 +1,14 @@
+[execution]
+# Locked down by default. Host execution must be an explicit local decision.
+allow_host_execution = false
+allow_network = false
+allow_git_writes = false
+allow_live_chain = false
+allow_secret_environment = false
+timeout_seconds = 30
+max_output_bytes = 1000000
+
+# Pin a digest, not a mutable tag, before enabling Docker execution.
+# docker_image = "ghcr.io/example/nirvana-evm@sha256:..."
+
+environment_allowlist = ["LANG", "LC_ALL", "PATH"]

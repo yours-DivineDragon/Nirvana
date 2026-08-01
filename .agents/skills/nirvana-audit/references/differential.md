@@ -1,0 +1,36 @@
+# Differential specification workflow
+
+## Prepare independent interpretations
+
+1. Pin one specification revision and canonical conformance suite.
+2. Create each implementation in a separate session and workspace.
+3. Prevent implementations from reading one another.
+4. Record coding agent, session, prompt, language, libraries, toolchain, and commit. Diversity reduces but does not eliminate correlated error.
+5. Do not call model APIs from Nirvana; start Codex, Claude Code, or Kimi Code directly.
+
+## Build the comparator
+
+Each implementation reads one JSON value from stdin and emits one JSON value to stdout. Put each case in JSONL as `{"id":"...","input":...}`. Configure implementations as command arrays in TOML.
+
+Prove normalization separately. Normalize only behavior the specification declares irrelevant. Preserve reverts/errors, return codes, and exact raw-output hashes.
+
+## Generate cases
+
+- Canonical examples and exact error cases
+- Zero, one, maximum, minimum, and off-by-one thresholds
+- Rounding, precision, overflow, coercion, and canonicalization boundaries
+- Malformed, reordered, duplicated, truncated, and unknown fields
+- Historical incident and regression seeds
+- Metamorphic properties such as encode/decode, normalize/replay, and signer/verifier agreement
+- Coverage-guided or property-based mutations when a safe sandbox exists
+
+## Classify divergences
+
+Use exactly one provisional class:
+
+- `harness_bug`
+- `implementation_bug`
+- `spec_ambiguity`
+- `clear_but_unsafe_spec`
+
+Keep `unclassified` until the comparator, environment, and input are reproduced. Minimize the seed and add a regression test. Patch prose and tests together for ambiguity. Agreement cannot rule out a clear but unsafe design.
