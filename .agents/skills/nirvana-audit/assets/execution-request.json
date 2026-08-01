@@ -19,13 +19,19 @@
   ],
   "control_invariants": [
     {
+      "assertion_id": "A-INDEPENDENT-BASELINE-PASSED",
+      "source": "stdout",
+      "operator": "contains",
+      "value": "[PASS] test_Baseline"
+    },
+    {
       "assertion_id": "A-TEST-SUITE-COMPLETED",
       "source": "stdout",
       "operator": "contains",
-      "value": "Suite result:"
+      "value": "Ran 2 tests"
     }
   ],
-  "command": ["forge", "test", "--root", "/harness", "--match-test", "test_Reproducer", "-vvv"],
+  "command": ["forge", "test", "--root", "/harness", "--match-test", "test_(Reproducer|Baseline)", "-vvv"],
   "cwd": ".",
   "stdin": "",
   "expected_return_codes": [0],
