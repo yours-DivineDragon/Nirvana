@@ -20,7 +20,7 @@ The canonical workflow is:
 | Coverage scheduler | Business-flow x threat-lens work queue | Agent workflow specified |
 | Candidate ensemble | Deterministic, graph, logic, attacker, spec, variant, differential, test-gap generators | Contextual EVM candidates; provenance-bound differential fuzz/flake foundation |
 | Hypothesis board | Typed shared state rather than agent chat | Ledger-backed imports implemented |
-| Verification router | Cheapest suitable static, dynamic, symbolic, formal, differential verifier | Adapter-bound assertions, runner-verified structural corroboration, paired negative controls, harness overlays, and strict/semantic replay implemented |
+| Verification router | Cheapest suitable static, dynamic, symbolic, formal, differential verifier | Adapter-bound assertions, runner-verified structural corroboration, health-checked candidate-bound negative controls, harness overlays, and strict/semantic replay implemented |
 | Evidence ledger | Immutable provenance and artifacts | Hash-chained JSONL implemented |
 | Adversarial validation | Devil's Advocate, Rescue Critic, deduplication and novelty | Workflow specified |
 | Output and learning | Confirmed report, analyst queue, rejection archive, detector distillation | Initial report and gates implemented |

@@ -94,13 +94,18 @@ class HypothesisBoard:
         scope = self._load_scope()
         target_root = Path(scope.target_root).resolve(strict=True)
         self._require_target_snapshot(scope, target_root)
-        control = self._prepare_negative_control(request, scope, target_root)
+        control = self._prepare_negative_control(
+            request, hypothesis, scope, target_root
+        )
         harness_root, harness_snapshot = self._prepare_harness(
             request, target_root, control[0] if control is not None else None
         )
         cwd = resolve_execution_cwd(target_root, request.cwd)
         result = self._run_request(runner, request, cwd, harness_root)
         assertion_results = evaluate_assertions(request, result)
+        invariant_results = evaluate_assertions(
+            request, result, request.control_invariants
+        )
         target_unchanged = self._target_snapshot_matches(scope, target_root)
         negative_control: NegativeControlExecution | None = None
         control_accepted = True
@@ -112,6 +117,9 @@ class HypothesisBoard:
                 runner, request, control_cwd, harness_root
             )
             control_assertions = evaluate_assertions(request, control_result)
+            control_invariants = evaluate_assertions(
+                request, control_result, request.control_invariants
+            )
             control_unchanged = self._target_snapshot_matches(
                 control_scope, control_root
             )
@@ -119,6 +127,7 @@ class HypothesisBoard:
                 control_result,
                 request.negative_control.expected_return_codes,
                 control_assertions,
+                control_invariants,
             )
             negative_control = NegativeControlExecution(
                 target_root=str(control_root),
@@ -129,6 +138,7 @@ class HypothesisBoard:
                 ),
                 result=control_result,
                 assertion_results=control_assertions,
+                invariant_results=control_invariants,
             )
         harness_unchanged = self._harness_snapshot_matches(
             harness_root, harness_snapshot
@@ -138,6 +148,7 @@ class HypothesisBoard:
             runner,
             result,
             assertion_results,
+            invariant_results,
             target_root,
             scope.target_snapshot_sha256,
             harness_snapshot=harness_snapshot,
@@ -145,7 +156,10 @@ class HypothesisBoard:
         )
         if (
             not result_is_accepted(
-                result, request.expected_return_codes, assertion_results
+                result,
+                request.expected_return_codes,
+                assertion_results,
+                invariant_results,
             )
             or not target_unchanged
             or not harness_unchanged
@@ -167,9 +181,15 @@ class HypothesisBoard:
                 request.expected_return_codes,
                 target_unchanged,
                 assertion_results,
+                invariant_results,
                 harness_unchanged=harness_unchanged,
                 control_unchanged=control_unchanged,
                 control_accepted=control_accepted,
+                control_invariant_results=(
+                    negative_control.invariant_results
+                    if negative_control is not None
+                    else []
+                ),
             )
             self.ledger.append(
                 {
@@ -209,6 +229,7 @@ class HypothesisBoard:
                 "replay_mode": request.replay_mode.value,
                 "expected_return_codes": list(request.expected_return_codes),
                 "assertions": assertion_results,
+                "control_invariants": invariant_results,
                 "harness_snapshot_sha256": (
                     harness_snapshot.snapshot_sha256
                     if harness_snapshot is not None
@@ -274,7 +295,9 @@ class HypothesisBoard:
         if recorded_runner.get("policy_sha256") != policy_sha256(runner):
             raise ValueError("replay policy differs from the original execution")
         self._require_target_snapshot(scope, target_root)
-        control = self._prepare_negative_control(request, scope, target_root)
+        control = self._prepare_negative_control(
+            request, hypothesis, scope, target_root
+        )
         harness_root, harness_snapshot = self._prepare_harness(
             request, target_root, control[0] if control is not None else None
         )
@@ -288,6 +311,9 @@ class HypothesisBoard:
         cwd = resolve_execution_cwd(target_root, request.cwd)
         result = self._run_request(runner, request, cwd, harness_root)
         assertion_results = evaluate_assertions(request, result)
+        invariant_results = evaluate_assertions(
+            request, result, request.control_invariants
+        )
         target_unchanged = self._target_snapshot_matches(scope, target_root)
         negative_control: NegativeControlExecution | None = None
         control_accepted = True
@@ -299,6 +325,9 @@ class HypothesisBoard:
                 runner, request, control_cwd, harness_root
             )
             control_assertions = evaluate_assertions(request, control_result)
+            control_invariants = evaluate_assertions(
+                request, control_result, request.control_invariants
+            )
             control_unchanged = self._target_snapshot_matches(
                 control_scope, control_root
             )
@@ -306,6 +335,7 @@ class HypothesisBoard:
                 control_result,
                 request.negative_control.expected_return_codes,
                 control_assertions,
+                control_invariants,
             )
             negative_control = NegativeControlExecution(
                 target_root=str(control_root),
@@ -316,6 +346,7 @@ class HypothesisBoard:
                 ),
                 result=control_result,
                 assertion_results=control_assertions,
+                invariant_results=control_invariants,
             )
         harness_unchanged = self._harness_snapshot_matches(
             harness_root, harness_snapshot
@@ -330,6 +361,7 @@ class HypothesisBoard:
             runner,
             result,
             assertion_results,
+            invariant_results,
             target_root,
             scope.target_snapshot_sha256,
             replay_of=evidence.artifact_sha256,
@@ -350,6 +382,23 @@ class HypothesisBoard:
         )
         control_signature_matches = True
         control_decision_matches = True
+        target_invariant_decision_matches = True
+        control_invariant_decision_matches = True
+        if request.control_invariants:
+            original_invariants = receipt.get("result", {}).get(
+                "control_invariants", []
+            )
+            original_invariant_decision = [
+                (item.get("assertion_id"), item.get("passed"))
+                for item in original_invariants
+            ]
+            replay_invariant_decision = [
+                (item.get("assertion_id"), item.get("passed"))
+                for item in invariant_results
+            ]
+            target_invariant_decision_matches = (
+                replay_invariant_decision == original_invariant_decision
+            )
         if negative_control is not None:
             original_control = receipt.get("negative_control") or {}
             original_assertions = original_control.get("result", {}).get(
@@ -364,6 +413,21 @@ class HypothesisBoard:
                 for item in negative_control.assertion_results
             ]
             control_decision_matches = replay_decision == original_decision
+            original_control_invariants = original_control.get("result", {}).get(
+                "control_invariants", []
+            )
+            original_control_invariant_decision = [
+                (item.get("assertion_id"), item.get("passed"))
+                for item in original_control_invariants
+            ]
+            replay_control_invariant_decision = [
+                (item.get("assertion_id"), item.get("passed"))
+                for item in negative_control.invariant_results
+            ]
+            control_invariant_decision_matches = (
+                replay_control_invariant_decision
+                == original_control_invariant_decision
+            )
         if negative_control is not None and request.replay_mode is ReplayMode.STRICT:
             original_control = receipt.get("negative_control") or {}
             original_control_signature = {
@@ -376,7 +440,10 @@ class HypothesisBoard:
             )
         verified = (
             result_is_accepted(
-                result, request.expected_return_codes, assertion_results
+                result,
+                request.expected_return_codes,
+                assertion_results,
+                invariant_results,
             )
             and target_unchanged
             and signature_matches
@@ -384,6 +451,8 @@ class HypothesisBoard:
             and control_unchanged
             and control_accepted
             and control_decision_matches
+            and target_invariant_decision_matches
+            and control_invariant_decision_matches
             and control_signature_matches
         )
         event = {
@@ -394,6 +463,10 @@ class HypothesisBoard:
             "replay_artifact_sha256": replay_digest,
             "result": current_signature,
             "assertions": assertion_results,
+            "control_invariants": invariant_results,
+            "control_invariant_decision_matches": (
+                target_invariant_decision_matches
+            ),
             "replay_mode": request.replay_mode.value,
             "harness_snapshot_sha256": (
                 harness_snapshot.snapshot_sha256
@@ -405,8 +478,12 @@ class HypothesisBoard:
                     "snapshot_sha256": negative_control.snapshot_sha256,
                     "result": result_signature(negative_control.result),
                     "assertions": negative_control.assertion_results,
+                    "control_invariants": negative_control.invariant_results,
                     "accepted": control_accepted,
                     "decision_matches": control_decision_matches,
+                    "invariant_decision_matches": (
+                        control_invariant_decision_matches
+                    ),
                 }
                 if negative_control is not None
                 else None
@@ -661,7 +738,10 @@ class HypothesisBoard:
         artifact = Path(evidence.artifact_path or "").resolve(strict=True)
         receipt = load_receipt(artifact)
         request = request_from_receipt(receipt)
-        control = self._prepare_negative_control(request, scope, target_root)
+        hypothesis = self._hypothesis_by_id(request.hypothesis_id)
+        control = self._prepare_negative_control(
+            request, hypothesis, scope, target_root
+        )
         _, harness_snapshot = self._prepare_harness(
             request, target_root, control[0] if control is not None else None
         )
@@ -675,6 +755,7 @@ class HypothesisBoard:
     def _prepare_negative_control(
         self,
         request: ExecutionRequest,
+        hypothesis: Hypothesis,
         scope: ScopeManifest,
         target_root: Path,
     ) -> tuple[Path, ScopeManifest, list[dict[str, str | None]]] | None:
@@ -729,6 +810,15 @@ class HypothesisBoard:
                 "negative control changed_files do not exactly match its target delta; "
                 f"expected {sorted(request.negative_control.changed_files)}, "
                 f"observed {actual_paths}"
+            )
+        candidate_paths = {
+            Path(location.path).as_posix()
+            for location in hypothesis.candidate_locations
+        }
+        if not set(actual_paths) & candidate_paths:
+            raise ValueError(
+                "negative control must change at least one hypothesis candidate location; "
+                f"candidates {sorted(candidate_paths)}, observed {actual_paths}"
             )
         return control_root, control_scope, changed_files
 
@@ -846,10 +936,12 @@ class HypothesisBoard:
         expected_return_codes: list[int],
         target_unchanged: bool,
         assertion_results: list[dict[str, Any]],
+        invariant_results: list[dict[str, Any]],
         *,
         harness_unchanged: bool = True,
         control_unchanged: bool = True,
         control_accepted: bool = True,
+        control_invariant_results: list[dict[str, Any]] | None = None,
     ) -> str:
         if blocked_reason is not None:
             return f"execution was blocked: {blocked_reason}"
@@ -871,8 +963,28 @@ class HypothesisBoard:
         ]
         if failed:
             return f"execution assertions failed: {', '.join(failed)}"
+        failed_invariants = [
+            str(item.get("assertion_id"))
+            for item in invariant_results
+            if item.get("passed") is not True
+        ]
+        if failed_invariants:
+            return (
+                "execution control invariants failed: "
+                f"{', '.join(failed_invariants)}"
+            )
         if not control_unchanged:
             return "execution changed the negative control target snapshot"
+        failed_control_invariants = [
+            str(item.get("assertion_id"))
+            for item in (control_invariant_results or [])
+            if item.get("passed") is not True
+        ]
+        if failed_control_invariants:
+            return (
+                "negative control health invariants failed: "
+                f"{', '.join(failed_control_invariants)}"
+            )
         if not control_accepted:
             return (
                 "negative control did not produce the declared opposite verifier decision"

@@ -22,6 +22,7 @@ IGNORED_DIRECTORIES = {
     "artifacts",
     "broadcast",
     "cache",
+    "crytic-export",
     "node_modules",
     "out",
     "build",

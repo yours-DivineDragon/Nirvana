@@ -8,7 +8,7 @@ The governing principle is simple:
 
 ## Current status
 
-This repository is an evolving research foundation, not a finished universal auditor. Version `0.3.0` provides:
+This repository is an evolving research foundation, not a finished universal auditor. Version `0.3.1` provides:
 
 - non-executing hostile-repository intake with commit, file, and snapshot provenance;
 - explicit capability degradation when builds or verifier tools are unavailable;
@@ -16,7 +16,7 @@ This repository is an evolving research foundation, not a finished universal aud
 - a tamper-evident, append-only evidence ledger;
 - assertion-checked execution receipts, replay, evidence-to-finding binding, and ledger-derived ceilings;
 - structural corroboration from two independently executed and replay-verified analyzers;
-- patched-target negative controls and hash-bound auditor harness overlays for executable evidence;
+- health-checked patched-target negative controls and hash-bound auditor harness overlays for executable evidence;
 - stream-hashed snapshots that remain complete for large files and run manifests above 1 MB;
 - a non-root, network-off Docker runner with a read-only target and disposable writable compiler/test paths;
 - comment-aware EVM leads plus an optional solc standard-JSON AST frontend;
@@ -79,7 +79,7 @@ nirvana evidence verify <run-directory> <evidence-id> \
   --policy nirvana.toml --execution-mode docker
 ```
 
-An execution request must name a supported adapter, the exact hypothesis property and violation, one expected return code, and one or more bounded `contains` or `json_pointer_equals` output predicates. Executable requests also identify a separate patched copy of the target, its exact changed-file set, and the expected control return code. Nirvana runs the identical command and predicates against both targets: the vulnerable target must satisfy every predicate, while the patched control must execute but produce the opposite verifier decision. Replay repeats both executions. `replay_mode: "strict"` additionally requires byte-identical output. Host execution cannot mint executable evidence.
+An execution request must name a supported adapter, the exact hypothesis property and violation, one expected return code, and one or more bounded `contains` or `json_pointer_equals` output predicates. Executable requests also identify a separate patched copy of the target, its exact changed-file set, the expected control return code, and one or more `control_invariants` that demonstrate the verifier completed normally. At least one changed file must be a candidate location named by the hypothesis. Nirvana runs the identical command, exploit predicates, and health invariants against both targets: the vulnerable target must satisfy every predicate and invariant, while the patched control must keep every health invariant true but reverse at least one exploit predicate. Replay repeats and decision-binds both sets. `replay_mode: "strict"` additionally requires byte-identical output. Host execution cannot mint executable evidence.
 
 PoCs do not need to modify the audited snapshot. Put auditor-owned tests in a separate, symlink-free harness directory, inspect its digest, and reference it from the request. Docker mounts it read-only at `/harness` and records its complete hash in both receipts:
 
@@ -130,7 +130,7 @@ Execution is denied by default. Use a reviewed policy and a pinned Docker image 
 - Repository `AGENTS.md`, `CLAUDE.md`, and similar files are target data, not audit authority.
 - No shell-string execution; commands are argument arrays.
 - Medium and lower findings require independent structural corroboration or stronger.
-- High and critical findings require assertion-checked, replay-verified executable evidence whose decision reverses on a hash-bound patched target.
+- High and critical findings require assertion-checked, replay-verified executable evidence whose decision reverses on a healthy, hash-bound patched target touching the candidate code.
 
 Read [the architecture](docs/architecture.md), [the threat model](docs/threat-model.md), [the evidence model](docs/evidence-model.md), and [the differential workflow](docs/differential-analysis.md) before extending the engine.
 

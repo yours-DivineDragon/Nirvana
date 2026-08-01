@@ -69,6 +69,12 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(
                 any(item.startswith("--tmpfs=/workspace/artifacts:rw") for item in command)
             )
+            self.assertTrue(
+                any(
+                    item.startswith("--tmpfs=/workspace/crytic-export:rw")
+                    for item in command
+                )
+            )
             mount = command[command.index("--mount") + 1]
             self.assertTrue(mount.endswith(",readonly"))
 

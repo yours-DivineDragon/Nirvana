@@ -50,6 +50,22 @@
         "additionalProperties": false
       }
     },
+    "control_invariants": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["assertion_id", "source", "operator", "value"],
+        "properties": {
+          "assertion_id": {"type": "string", "pattern": "^A-[A-Za-z0-9._-]+$"},
+          "source": {"enum": ["stdout", "stderr"]},
+          "operator": {"enum": ["contains", "json_pointer_equals"]},
+          "value": {},
+          "pointer": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
     "command": {
       "type": "array",
       "minItems": 1,

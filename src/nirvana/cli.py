@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.3.0")
+    parser.add_argument("--version", action="version", version="nirvana 0.3.1")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")

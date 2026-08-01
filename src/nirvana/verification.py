@@ -190,6 +190,7 @@ class NegativeControlExecution:
     expected_return_codes: list[int]
     result: CommandResult
     assertion_results: list[dict[str, Any]]
+    invariant_results: list[dict[str, Any]]
 
     def to_receipt(self) -> dict[str, Any]:
         return {
@@ -199,7 +200,11 @@ class NegativeControlExecution:
             },
             "changed_files": self.changed_files,
             "expected_return_codes": list(self.expected_return_codes),
-            "result": _result_payload(self.result, self.assertion_results),
+            "result": _result_payload(
+                self.result,
+                self.assertion_results,
+                self.invariant_results,
+            ),
         }
 
 
@@ -213,6 +218,7 @@ class ExecutionRequest:
     adapter: str
     claim: ExecutionClaim
     assertions: list[ExecutionAssertion]
+    control_invariants: list[ExecutionAssertion]
     command: list[str]
     cwd: str = "."
     stdin: str = ""
@@ -237,6 +243,7 @@ class ExecutionRequest:
             "adapter",
             "claim",
             "assertions",
+            "control_invariants",
             "command",
             "cwd",
             "stdin",
@@ -288,6 +295,7 @@ class ExecutionRequest:
         _validate_adapter_contract(adapter, command, evidence_level)
         expected = value.get("expected_return_codes", [0])
         _validate_return_codes(expected, "expected_return_codes")
+        _validate_adapter_return_codes(adapter, expected, "expected_return_codes")
         standard_input = value.get("stdin", "")
         if not isinstance(standard_input, str):
             raise ValueError("execution stdin must be a string")
@@ -313,6 +321,36 @@ class ExecutionRequest:
         assertion_ids = [item.assertion_id for item in assertions]
         if len(set(assertion_ids)) != len(assertion_ids):
             raise ValueError("execution assertion identifiers must be unique")
+        raw_control_invariants = value.get("control_invariants", [])
+        if (
+            not isinstance(raw_control_invariants, list)
+            or len(raw_control_invariants) > MAX_ASSERTIONS
+        ):
+            raise ValueError(
+                f"execution request allows at most {MAX_ASSERTIONS} control invariants"
+            )
+        if evidence_level is EvidenceLevel.EXECUTABLE and not raw_control_invariants:
+            raise ValueError(
+                "executable evidence requires at least one control invariant that passes "
+                "on both the audited and patched targets"
+            )
+        if (
+            evidence_level is EvidenceLevel.STRUCTURALLY_CONFIRMED
+            and raw_control_invariants
+        ):
+            raise ValueError("control invariants apply to executable evidence only")
+        control_invariants = [
+            ExecutionAssertion.from_dict(item) for item in raw_control_invariants
+        ]
+        invariant_ids = [item.assertion_id for item in control_invariants]
+        if len(set(invariant_ids)) != len(invariant_ids):
+            raise ValueError("control invariant identifiers must be unique")
+        overlapping_ids = sorted(set(assertion_ids) & set(invariant_ids))
+        if overlapping_ids:
+            raise ValueError(
+                "control invariant identifiers must be distinct from exploit assertions: "
+                f"{overlapping_ids}"
+            )
         assumptions = value.get("assumptions", [])
         if not isinstance(assumptions, list) or any(not isinstance(item, str) for item in assumptions):
             raise ValueError("execution assumptions must be a string array")
@@ -341,6 +379,12 @@ class ExecutionRequest:
             raise ValueError(
                 "executable evidence requires a patched-target negative control"
             )
+        if negative_control is not None:
+            _validate_adapter_return_codes(
+                adapter,
+                negative_control.expected_return_codes,
+                "negative control expected_return_codes",
+            )
         return cls(
             evidence_id=evidence_id,
             hypothesis_id=hypothesis_id,
@@ -350,6 +394,7 @@ class ExecutionRequest:
             adapter=adapter,
             claim=ExecutionClaim.from_dict(value["claim"]),
             assertions=assertions,
+            control_invariants=control_invariants,
             command=list(command),
             cwd=cwd,
             stdin=standard_input,
@@ -420,14 +465,16 @@ def snapshot_harness(path: Path) -> HarnessSnapshot:
 
 
 def evaluate_assertions(
-    request: ExecutionRequest, result: CommandResult
+    request: ExecutionRequest,
+    result: CommandResult,
+    assertions: list[ExecutionAssertion] | None = None,
 ) -> list[dict[str, Any]]:
     streams = {
         AssertionSource.STDOUT: result.stdout,
         AssertionSource.STDERR: result.stderr,
     }
     evaluations: list[dict[str, Any]] = []
-    for assertion in request.assertions:
+    for assertion in request.assertions if assertions is None else assertions:
         passed = False
         observed_hash: str | None = None
         error: str | None = None
@@ -461,6 +508,7 @@ def result_is_accepted(
     result: CommandResult,
     expected_return_codes: list[int],
     assertion_results: list[dict[str, Any]],
+    invariant_results: list[dict[str, Any]] | None = None,
 ) -> bool:
     return (
         result.blocked_reason is None
@@ -468,6 +516,9 @@ def result_is_accepted(
         and result.return_code in expected_return_codes
         and bool(assertion_results)
         and all(item.get("passed") is True for item in assertion_results)
+        and all(
+            item.get("passed") is True for item in (invariant_results or [])
+        )
     )
 
 
@@ -475,6 +526,7 @@ def negative_control_is_accepted(
     result: CommandResult,
     expected_return_codes: list[int],
     assertion_results: list[dict[str, Any]],
+    invariant_results: list[dict[str, Any]],
 ) -> bool:
     return (
         result.blocked_reason is None
@@ -483,6 +535,8 @@ def negative_control_is_accepted(
         and bool(assertion_results)
         and all(item.get("error") is None for item in assertion_results)
         and any(item.get("passed") is not True for item in assertion_results)
+        and bool(invariant_results)
+        and all(item.get("passed") is True for item in invariant_results)
     )
 
 
@@ -501,6 +555,7 @@ def execution_receipt(
     runner: CommandRunner,
     result: CommandResult,
     assertion_results: list[dict[str, Any]],
+    control_invariant_results: list[dict[str, Any]],
     target_root: Path,
     target_snapshot_sha256: str,
     replay_of: str | None = None,
@@ -508,7 +563,7 @@ def execution_receipt(
     negative_control: NegativeControlExecution | None = None,
 ) -> dict[str, Any]:
     receipt: dict[str, Any] = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.3.0",
         "created_at": utc_now(),
         "evidence_id": request.evidence_id,
         "target": {
@@ -529,7 +584,11 @@ def execution_receipt(
             "stdin_base64": base64.b64encode(request.stdin.encode("utf-8")).decode("ascii"),
             "stdin_sha256": sha256_bytes(request.stdin.encode("utf-8")),
         },
-        "result": _result_payload(result, assertion_results),
+        "result": _result_payload(
+            result,
+            assertion_results,
+            control_invariant_results,
+        ),
     }
     receipt["request"].pop("stdin", None)
     if replay_of is not None:
@@ -539,7 +598,9 @@ def execution_receipt(
 
 
 def _result_payload(
-    result: CommandResult, assertion_results: list[dict[str, Any]]
+    result: CommandResult,
+    assertion_results: list[dict[str, Any]],
+    control_invariant_results: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         **result_signature(result),
@@ -548,6 +609,7 @@ def _result_payload(
         "stderr_base64": base64.b64encode(result.stderr).decode("ascii"),
         "duration_ms": result.duration_ms,
         "assertions": assertion_results,
+        "control_invariants": control_invariant_results,
     }
 
 
@@ -601,6 +663,16 @@ def _validate_return_codes(value: Any, label: str) -> None:
         for item in value
     ):
         raise ValueError(f"{label} must contain an integer from 0 through 255")
+
+
+def _validate_adapter_return_codes(
+    adapter: str, value: list[int], label: str
+) -> None:
+    if adapter == "pytest" and value[0] not in {0, 1}:
+        raise ValueError(
+            f"pytest {label} must be 0 or 1; "
+            "collection, interruption, usage, and infrastructure exit states cannot prove a fix"
+        )
 
 
 def _safe_relative_path(value: Any) -> bool:
