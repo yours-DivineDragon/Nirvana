@@ -8,13 +8,13 @@ The governing principle is simple:
 
 ## Current status
 
-This repository is an initial research foundation, not a finished universal auditor. Version `0.1.0` provides:
+This repository is an initial research foundation, not a finished universal auditor. Version `0.1.1` provides:
 
-- hostile-repository intake with commit and file provenance;
+- non-executing hostile-repository intake with commit, file, and snapshot provenance;
 - explicit capability degradation when builds or verifier tools are unavailable;
 - a typed hypothesis, evidence, finding, and differential-mismatch model;
 - a tamper-evident, append-only evidence ledger;
-- reporting gates that prevent unproven high/critical findings;
+- runner-minted execution receipts, matching replay, and enforced reporting ceilings;
 - comment-aware deterministic EVM candidate generation;
 - a differential harness for comparing existing independent implementations;
 - a shared audit skill for Codex, Claude Code, and Kimi Code.
@@ -52,6 +52,21 @@ Verify ledger integrity independently:
 ```bash
 nirvana ledger verify ./nirvana-runs/<run-id>/evidence.jsonl
 ```
+
+Intake never launches Git from the target, so repository-local hooks and `core.fsmonitor` cannot execute. Dirty status is intentionally `null` until an isolated adapter can establish it safely. The target snapshot covers every inventoried file and executable verification is refused when that snapshot is incomplete. Mutable scope state is checked against the hash-chained ledger.
+
+## Mint executable evidence
+
+Executable evidence is created by execution, not imported as a claim. Fill `.agents/skills/nirvana-audit/assets/execution-request.json`, review the argv, and run it through a pinned sandbox:
+
+```bash
+nirvana evidence run <run-directory> <execution-request.json> \
+  --policy nirvana.toml --execution-mode docker
+nirvana evidence verify <run-directory> <evidence-id> \
+  --policy nirvana.toml --execution-mode docker
+```
+
+The first command captures a hashed execution receipt. The second replays it using the same policy and target snapshot. Confirmation remains blocked until the replay matches and raises the run ceiling. Host execution cannot mint executable evidence.
 
 ## Use from a coding agent
 

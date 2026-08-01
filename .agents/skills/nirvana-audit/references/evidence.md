@@ -19,6 +19,8 @@
 - Fork evidence proves behavior at one pinned state and configuration, not every deployment.
 - Economic evidence states liquidity, capital, ordering, oracle, fee, and governance assumptions.
 - Store contradicting evidence and rejection reasons alongside supporting evidence.
+- Imported evidence records cannot claim `executable` or stronger. Nirvana must run the reviewed command, capture the bounded output and target snapshot in a hashed receipt, and replay that receipt under the same policy before it can support confirmation.
+- A command receipt proves what ran and what it returned. Impact and exploitability still require adversarial review; a matching process exit alone is not proof of a vulnerability.
 
 ## Finding gate
 

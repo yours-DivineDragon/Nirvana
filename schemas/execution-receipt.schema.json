@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/execution-receipt.schema.json",
+  "title": "Nirvana executable evidence receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "created_at",
+    "evidence_id",
+    "target",
+    "runner",
+    "request",
+    "result"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "evidence_id": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"},
+    "replay_of": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "target": {
+      "type": "object",
+      "required": ["root", "snapshot_sha256"],
+      "properties": {
+        "root": {"type": "string", "minLength": 1},
+        "snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "runner": {
+      "type": "object",
+      "required": ["mode", "policy_sha256", "docker_image"],
+      "properties": {
+        "mode": {"enum": ["deny", "host", "docker"]},
+        "policy_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "docker_image": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "evidence_id",
+        "hypothesis_id",
+        "kind",
+        "summary",
+        "command",
+        "cwd",
+        "expected_return_codes",
+        "tool_version",
+        "assumptions",
+        "stdin_base64",
+        "stdin_sha256"
+      ],
+      "properties": {
+        "evidence_id": {"type": "string"},
+        "hypothesis_id": {"type": "string"},
+        "kind": {"type": "string"},
+        "summary": {"type": "string"},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "cwd": {"type": "string"},
+        "expected_return_codes": {"type": "array", "items": {"type": "integer"}},
+        "tool_version": {"type": ["string", "null"]},
+        "assumptions": {"type": "array", "items": {"type": "string"}},
+        "stdin_base64": {"type": "string"},
+        "stdin_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "command",
+        "return_code",
+        "stdout_sha256",
+        "stderr_sha256",
+        "stdout_base64",
+        "stderr_base64",
+        "duration_ms",
+        "blocked_reason",
+        "timed_out"
+      ],
+      "properties": {
+        "command": {"type": "array", "items": {"type": "string"}},
+        "return_code": {"type": ["integer", "null"]},
+        "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "stdout_base64": {"type": "string"},
+        "stderr_base64": {"type": "string"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "blocked_reason": {"type": ["string", "null"]},
+        "timed_out": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

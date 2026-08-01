@@ -13,6 +13,16 @@ Nirvana separates suspicion from proof.
 
 High and critical findings normally require `executable` evidence or stronger. A cryptographic or design exception must be independently established and document why safe reproduction is impossible.
 
+## Executable provenance
+
+Executable evidence cannot be imported as a self-declared JSON record. `nirvana evidence run` executes a reviewed request through `CommandRunner` in a digest-pinned Docker sandbox and writes a hashed receipt containing the target snapshot, exact argv, working directory, bounded stdin/stdout/stderr, return code, execution mode, and policy fingerprint. Host execution may support reviewed local experiments, but it cannot mint executable evidence. The evidence source is assigned by Nirvana rather than by the request.
+
+`nirvana evidence verify` replays that receipt against the same target snapshot and policy. The replay must match the original return code and output hashes. Only a successful replay raises the run evidence ceiling to `executable`, and only replay-verified executable evidence can support a confirmed finding.
+
+The captured scope is also ledger-backed. Direct edits to `scope.json`, including its ceiling, are rejected when they do not correspond to recorded ceiling transitions. Executable verification is refused when any scoped file lacks a complete content hash.
+
+The receipt establishes execution provenance, not security impact by itself. The analyst must still validate the violated property, reachability, attacker prerequisites, and impact.
+
 ## Evidence ledger
 
 Each JSONL record contains a sequence number, timestamp, previous-record hash, typed payload, and its own SHA-256 hash. Appends verify the complete existing chain before writing. This detects rewriting, deletion, insertion, and reordering within the retained ledger.

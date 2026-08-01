@@ -54,8 +54,18 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 2. Prefer deterministic tools and executable evaluators over model judgment.
 3. Do not execute an untrusted target on the host. Use a reviewed policy and pinned Docker image; if the sandbox is unavailable, continue source analysis and lower the evidence ceiling.
 4. Preserve the exact command array, tool version, target revision, assumptions, output hashes, minimized input, and reproduction steps.
-5. Copy `assets/evidence.json`, fill it, and import it with `nirvana evidence import`.
-6. Read `references/evidence.md` before promoting any evidence level.
+5. Use `assets/evidence.json` and `nirvana evidence import` only for non-executable analyst material. Imported JSON cannot self-assert executable evidence.
+6. For executable evidence, copy `assets/execution-request.json`, review every argument, then run it through a pinned sandbox:
+
+   ```bash
+   nirvana evidence run <run-directory> <execution-request.json> \
+     --policy <policy.toml> --execution-mode docker
+   nirvana evidence verify <run-directory> <evidence-id> \
+     --policy <policy.toml> --execution-mode docker
+   ```
+
+7. Use the identical policy and execution mode for replay. A successful matching replay raises the run ceiling to `executable`; a receipt that has not replayed cannot confirm a finding.
+8. Read `references/evidence.md` before promoting any evidence level.
 
 ## Falsify, rescue, and deduplicate
 
