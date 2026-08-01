@@ -1,3 +1,12 @@
+[intake]
+# This limits content analysis, not snapshot hashing. Every scoped regular file
+# is stream-hashed regardless of size.
+max_file_bytes = 5000000
+
+# Defaults such as .git, out, cache, build, target, and node_modules are always
+# retained. Add target-specific generated directories here.
+excluded_directories = ["generated-artifacts"]
+
 [execution]
 # Locked down by default. Host execution must be an explicit local decision.
 allow_host_execution = false
@@ -7,8 +16,22 @@ allow_live_chain = false
 allow_secret_environment = false
 timeout_seconds = 30
 max_output_bytes = 1000000
+docker_user = "65532:65532"
+docker_work_bytes = 1073741824
 
 # Pin a digest, not a mutable tag, before enabling Docker execution.
 # docker_image = "ghcr.io/example/nirvana-evm@sha256:..."
 
 environment_allowlist = ["LANG", "LC_ALL", "PATH"]
+
+# These non-secret values are passed into the container. Compiler/test outputs
+# and caches live on the disposable executable /work tmpfs; the target remains
+# mounted read-only.
+[execution.container_environment]
+HOME = "/work/home"
+TMPDIR = "/work/tmp"
+XDG_CACHE_HOME = "/work/cache"
+FOUNDRY_OUT = "/work/foundry-out"
+FOUNDRY_CACHE_PATH = "/work/foundry-cache"
+CARGO_TARGET_DIR = "/work/cargo-target"
+NO_COLOR = "1"

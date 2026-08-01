@@ -1,12 +1,27 @@
 {
   "evidence_id": "E-REPLACE-ME",
   "hypothesis_id": "H-REPLACE-ME",
+  "evidence_level": "executable",
   "kind": "failing_test",
-  "summary": "State exactly what outcome this command is expected to reproduce",
+  "summary": "State exactly which security violation this test establishes",
+  "adapter": "forge-test",
+  "claim": {
+    "security_property": "Copy the hypothesis security_property exactly",
+    "suspected_violation": "Copy the hypothesis suspected_violation exactly"
+  },
+  "assertions": [
+    {
+      "assertion_id": "A-REPRODUCER-PASSED",
+      "source": "stdout",
+      "operator": "regex",
+      "value": "(?m)^\\[PASS\\] test_Reproducer"
+    }
+  ],
   "command": ["forge", "test", "--match-test", "test_Reproducer", "-vvv"],
   "cwd": ".",
   "stdin": "",
-  "expected_return_codes": [1],
-  "tool_version": null,
+  "expected_return_codes": [0],
+  "replay_mode": "assertions",
+  "tool_version": "forge REPLACE-WITH-VERSION",
   "assumptions": []
 }

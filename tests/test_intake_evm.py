@@ -1,10 +1,11 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from nirvana.evm import SolidityCandidateScanner
-from nirvana.intake import RepositoryIntake
+from nirvana.evm import SolcAstCandidateScanner, SolidityCandidateScanner
+from nirvana.intake import IntakePolicy, RepositoryIntake
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evm"
@@ -60,6 +61,115 @@ class IntakeAndEvmTests(unittest.TestCase):
         self.assertEqual(rule_ids.count("deterministic:EVM-AUTH-TX-ORIGIN"), 1)
         self.assertEqual(rule_ids.count("deterministic:EVM-EFFECT-DELEGATECALL"), 1)
         self.assertTrue(all(item.evidence_level.value == "hypothesis" for item in hypotheses))
+
+    def test_oversized_files_are_stream_hashed_and_keep_snapshot_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            artifact = target / "artifact.bin"
+            artifact.write_bytes(b"x" * 6_000_001)
+
+            scope = RepositoryIntake(max_file_bytes=1_000_000).inspect(target)
+
+            record = next(item for item in scope.files if item.path == "artifact.bin")
+            self.assertEqual(record.kind, "oversized")
+            self.assertRegex(record.sha256 or "", r"^[a-f0-9]{64}$")
+            self.assertTrue(scope.snapshot_complete)
+
+    def test_intake_policy_exposes_analysis_limit_and_extra_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            policy_path = root / "nirvana.toml"
+            policy_path.write_text(
+                "[intake]\nmax_file_bytes = 12345\n"
+                'excluded_directories = ["vendor-generated"]\n'
+            )
+            policy = IntakePolicy.load(policy_path)
+
+            self.assertEqual(policy.max_file_bytes, 12345)
+            self.assertIn("vendor-generated", policy.excluded_directories)
+            self.assertIn(".git", policy.excluded_directories)
+
+    def test_solc_ast_scanner_emits_contextual_security_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "Vault.sol"
+            source.write_text("contract Vault { uint totalSupply; function deposit() external {} }\n")
+            ast = {
+                "sources": {
+                    "Vault.sol": {
+                        "ast": {
+                            "nodeType": "SourceUnit",
+                            "nodes": [
+                                {
+                                    "nodeType": "VariableDeclaration",
+                                    "id": 1,
+                                    "stateVariable": True,
+                                    "src": "17:16:0",
+                                },
+                                {
+                                    "nodeType": "FunctionDefinition",
+                                    "name": "deposit",
+                                    "kind": "function",
+                                    "visibility": "external",
+                                    "stateMutability": "nonpayable",
+                                    "src": "35:30:0",
+                                    "modifiers": [],
+                                    "body": {
+                                        "nodeType": "Block",
+                                        "statements": [
+                                            {
+                                                "nodeType": "FunctionCall",
+                                                "src": "40:4:0",
+                                                "expression": {
+                                                    "nodeType": "MemberAccess",
+                                                    "memberName": "call",
+                                                },
+                                            },
+                                            {
+                                                "nodeType": "MemberAccess",
+                                                "memberName": "getReserves",
+                                                "src": "44:4:0",
+                                            },
+                                            {
+                                                "nodeType": "BinaryOperation",
+                                                "operator": "/",
+                                                "src": "48:4:0",
+                                                "leftExpression": {
+                                                    "nodeType": "Identifier",
+                                                    "name": "totalSupply",
+                                                },
+                                            },
+                                            {
+                                                "nodeType": "Assignment",
+                                                "src": "52:4:0",
+                                                "leftHandSide": {
+                                                    "nodeType": "Identifier",
+                                                    "referencedDeclaration": 1,
+                                                },
+                                            },
+                                        ],
+                                    },
+                                },
+                            ],
+                        }
+                    }
+                }
+            }
+            ast_path = root / "solc-output.json"
+            ast_path.write_text(json.dumps(ast))
+
+            hypotheses = SolcAstCandidateScanner().scan_file(ast_path, root)
+            generators = {item.generator for item in hypotheses}
+
+            self.assertEqual(
+                generators,
+                {
+                    "solc-ast:EVM-AST-REENTRANCY",
+                    "solc-ast:EVM-AST-MISSING-AUTHORITY",
+                    "solc-ast:EVM-AST-SPOT-ORACLE",
+                    "solc-ast:EVM-AST-SHARE-INFLATION",
+                },
+            )
 
 
 if __name__ == "__main__":

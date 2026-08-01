@@ -54,14 +54,20 @@ def inspect_tools() -> list[ToolStatus]:
 
 def doctor_report() -> dict[str, Any]:
     statuses = inspect_tools()
+    available = {item.name for item in statuses if item.available}
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "tools": jsonable(statuses),
         "capabilities": {
             "intake": True,
             "evidence_ledger": True,
+            "runtime_schema_validation": True,
             "deterministic_evm_candidates": True,
-            "sandboxed_execution": any(item.name == "docker" and item.available for item in statuses),
-            "executable_evm_verification": any(item.name == "forge" and item.available for item in statuses),
+            "solc_ast_frontend": True,
+            "structural_artifact_corroboration": True,
+            "sandboxed_execution": "docker" in available,
+            # Conservative host probe only. A pinned image may contain Forge even
+            # when the host does not; that image still needs an actual test run.
+            "executable_evm_verification": {"docker", "forge"} <= available,
         },
     }

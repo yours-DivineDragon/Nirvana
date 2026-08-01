@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,6 +31,42 @@ class PolicyTests(unittest.TestCase):
                 ExecutionMode.DOCKER,
             ).run(["true"], Path(directory))
             self.assertIn("pinned by SHA-256", result.blocked_reason or "")
+
+    def test_opaque_shell_and_forge_create_are_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runner = CommandRunner(
+                ExecutionPolicy(allow_host_execution=True, allow_network=True),
+                ExecutionMode.HOST,
+            )
+            shell = runner.run(["bash", "-c", "git commit -am pwn"], Path(directory))
+            login_shell = runner.run(["bash", "-lc", "git commit -am pwn"], Path(directory))
+            git_alias = runner.run(
+                ["git", "-c", "alias.pwn=!sh -c id", "pwn"], Path(directory)
+            )
+            deploy = runner.run(["forge", "create", "Contract"], Path(directory))
+            self.assertIn("opaque shell", shell.blocked_reason or "")
+            self.assertIn("opaque shell", login_shell.blocked_reason or "")
+            self.assertIn("Git execution", git_alias.blocked_reason or "")
+            self.assertIn("forge create", deploy.blocked_reason or "")
+
+    def test_docker_uses_nonroot_user_writable_tool_area_and_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
+        ), patch("nirvana.policy.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
+            result = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            ).run(["forge", "test"], Path(directory))
+
+            self.assertEqual(result.return_code, 0)
+            command = run.call_args.args[0]
+            self.assertIn("--user", command)
+            self.assertIn("65532:65532", command)
+            self.assertTrue(any(item.startswith("--tmpfs=/work:rw,exec") for item in command))
+            self.assertIn("FOUNDRY_OUT=/work/foundry-out", command)
+            mount = command[command.index("--mount") + 1]
+            self.assertTrue(mount.endswith(",readonly"))
 
 
 if __name__ == "__main__":

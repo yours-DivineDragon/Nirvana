@@ -17,11 +17,17 @@ High and critical findings normally require `executable` evidence or stronger. A
 
 Executable evidence cannot be imported as a self-declared JSON record. `nirvana evidence run` executes a reviewed request through `CommandRunner` in a digest-pinned Docker sandbox and writes a hashed receipt containing the target snapshot, exact argv, working directory, bounded stdin/stdout/stderr, return code, execution mode, and policy fingerprint. Host execution may support reviewed local experiments, but it cannot mint executable evidence. The evidence source is assigned by Nirvana rather than by the request.
 
-`nirvana evidence verify` replays that receipt against the same target snapshot and policy. The replay must match the original return code and output hashes. Only a successful replay raises the run evidence ceiling to `executable`, and only replay-verified executable evidence can support a confirmed finding.
+Every request binds to the hypothesis security property and suspected violation. It names a supported adapter and checked stdout/stderr predicates (`contains`, `regex`, or `json_pointer_equals`) plus exactly one expected return code. The receipt stores each predicate decision and the raw output hashes. A command whose argv does not match its adapter is rejected.
+
+`nirvana evidence verify` replays that receipt against the same target snapshot and policy. In the default assertion mode, the declared predicates and return code must pass again even when benign timing, seed, gas, or temporary-path text changes. Strict mode additionally requires the original output hashes. Only a successful executable replay raises the run ceiling to `executable`.
+
+Two distinct solc-AST, Slither, or Semgrep artifacts may raise the intermediate ceiling with `nirvana evidence corroborate`. Each imported record must bind its artifact hash, analyzer/version, target snapshot, and exact hypothesis claim. This tier can support medium-and-lower findings under review; it can never satisfy the high/critical executable gate.
 
 The captured scope is also ledger-backed. Direct edits to `scope.json`, including its ceiling, are rejected when they do not correspond to recorded ceiling transitions. Executable verification is refused when any scoped file lacks a complete content hash.
 
-The receipt establishes execution provenance, not security impact by itself. The analyst must still validate the violated property, reachability, attacker prerequisites, and impact.
+Findings list the exact `supporting_evidence` identifiers. Executable findings also name one `reproducer_evidence_id`. Every identifier must belong to the same hypothesis and claim, and executable support must be replay-verified. This prevents an unrelated successful command from unlocking another claim. The checked predicates establish a declared verifier decision, but the analyst must still validate reachability, attacker prerequisites, severity, and impact.
+
+Ceiling transitions are appended to the ledger before the derived `scope.json` projection is replaced. If the process stops between those operations, the next load repairs a stale lower projection from the ledger. A manifest that claims a higher unledgered ceiling is rejected.
 
 ## Evidence ledger
 

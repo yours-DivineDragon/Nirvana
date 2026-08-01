@@ -21,12 +21,14 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 2. Run:
 
    ```bash
-   nirvana audit /absolute/path/to/target --output ./nirvana-runs
+   nirvana audit /absolute/path/to/target --output ./nirvana-runs \
+     --policy ./nirvana.toml
    ```
 
-3. Read the generated `scope.json`, `report.md`, and `hypotheses.jsonl`. Verify `evidence.jsonl` with `nirvana ledger verify`.
-4. Surface dirty commits, exclusions, unavailable toolchains, untrusted instruction surfaces, failed builds, and the resulting evidence ceiling.
-5. Never upgrade a support or evidence claim beyond what the artifacts establish.
+3. When isolated solc standard-JSON output is available, pass it with `--solc-ast` for compiler-context candidates. The artifact is input, never proof.
+4. Read the generated `scope.json`, `report.md`, and `hypotheses.jsonl`. Verify `evidence.jsonl` with `nirvana ledger verify`.
+5. Surface dirty commits, exclusions, unavailable toolchains, untrusted instruction surfaces, failed builds, and the resulting evidence ceiling.
+6. Never upgrade a support or evidence claim beyond what the artifacts establish.
 
 ## Model the system before hunting
 
@@ -55,7 +57,14 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 3. Do not execute an untrusted target on the host. Use a reviewed policy and pinned Docker image; if the sandbox is unavailable, continue source analysis and lower the evidence ceiling.
 4. Preserve the exact command array, tool version, target revision, assumptions, output hashes, minimized input, and reproduction steps.
 5. Use `assets/evidence.json` and `nirvana evidence import` only for non-executable analyst material. Imported JSON cannot self-assert executable evidence.
-6. For executable evidence, copy `assets/execution-request.json`, review every argument, then run it through a pinned sandbox:
+6. For structural-only work, import exact hashed analyzer artifacts from at least two independent supported adapters, including analyzer/version, target snapshot, and the exact hypothesis claim. Then run:
+
+   ```bash
+   nirvana evidence corroborate <run-directory> <hypothesis-id> <evidence-id-1> <evidence-id-2>
+   ```
+
+   This may raise the ceiling only to `structurally_confirmed`; it cannot support high or critical severity.
+7. For executable evidence, copy `assets/execution-request.json`. Copy the hypothesis property/violation exactly, select a supported adapter, declare predicates that identify the specific verifier decision, review every argument, and run it through a pinned sandbox:
 
    ```bash
    nirvana evidence run <run-directory> <execution-request.json> \
@@ -64,8 +73,9 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
      --policy <policy.toml> --execution-mode docker
    ```
 
-7. Use the identical policy and execution mode for replay. A successful matching replay raises the run ceiling to `executable`; a receipt that has not replayed cannot confirm a finding.
-8. Read `references/evidence.md` before promoting any evidence level.
+8. Use the identical policy and execution mode for replay. Default assertion replay tolerates non-semantic output noise; use strict replay only for byte-deterministic tools. A successful replay raises the run ceiling to `executable`; a receipt that has not replayed cannot confirm a finding.
+9. The command must match its adapter. Never use `echo`, an opaque shell string, or deployment tooling as vulnerability evidence.
+10. Read `references/evidence.md` before promoting any evidence level.
 
 ## Falsify, rescue, and deduplicate
 
@@ -78,7 +88,7 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 
 1. Keep unproven candidates in the analyst queue. Never turn persuasive prose into evidence.
 2. High and critical severity normally require executable evidence or stronger.
-3. Copy `assets/finding.json`, fill the complete causal and reproduction contract, then run:
+3. Copy `assets/finding.json`, list the exact supporting evidence IDs, bind an executable reproducer ID when applicable, fill the complete causal and reproduction contract, then run:
 
    ```bash
    nirvana finding confirm <run-directory> <finding.json>
@@ -88,7 +98,7 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 
 ## Run differential specification analysis
 
-Read `references/differential.md` fully. Generate implementations in isolated sessions/workspaces, pin the same specification, prevent cross-reading, and compare through `nirvana spec compare`. Treat every mismatch as unclassified until harness defects are ruled out. Agreement is not proof, and a clear but unsafe specification requires design review rather than majority voting.
+Read `references/differential.md` fully. Generate implementations in isolated sessions/workspaces, pin the same specification, prevent cross-reading, and record source files, language, producer/model/prompt provenance, and tool version before `nirvana spec compare`. Use repeated runs and a seeded fuzz budget. Treat every mismatch as unclassified until harness defects are ruled out. Agreement is not proof, and a clear but unsafe specification requires design review rather than majority voting.
 
 ## Report the audit
 

@@ -27,11 +27,38 @@ class ExecutionPolicy:
     timeout_seconds: int = 30
     max_output_bytes: int = 1_000_000
     docker_image: str | None = None
+    docker_user: str = "65532:65532"
+    docker_work_bytes: int = 1_073_741_824
     environment_allowlist: list[str] = field(default_factory=lambda: ["LANG", "LC_ALL", "PATH"])
+    container_environment: dict[str, str] = field(
+        default_factory=lambda: {
+            "HOME": "/work/home",
+            "TMPDIR": "/work/tmp",
+            "XDG_CACHE_HOME": "/work/cache",
+            "FOUNDRY_OUT": "/work/foundry-out",
+            "FOUNDRY_CACHE_PATH": "/work/foundry-cache",
+            "CARGO_TARGET_DIR": "/work/cargo-target",
+            "NO_COLOR": "1",
+        }
+    )
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds < 1 or self.max_output_bytes < 1:
+        if self.timeout_seconds < 1 or self.max_output_bytes < 1 or self.docker_work_bytes < 1:
             raise ValueError("execution limits must be positive")
+        if re.fullmatch(r"[0-9]+:[0-9]+", self.docker_user) is None:
+            raise ValueError("docker_user must be a numeric uid:gid")
+        if self.docker_user.split(":", maxsplit=1)[0] == "0":
+            raise ValueError("docker verifier must not run as root")
+        if any(
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+            for key in self.environment_allowlist
+        ):
+            raise ValueError("environment_allowlist contains an invalid variable name")
+        for key, value in self.container_environment.items():
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None:
+                raise ValueError(f"invalid container environment name: {key}")
+            if not isinstance(value, str) or "\x00" in value:
+                raise ValueError(f"invalid container environment value for {key}")
 
     @classmethod
     def load(cls, path: Path | None) -> "ExecutionPolicy":
@@ -40,6 +67,27 @@ class ExecutionPolicy:
         with path.open("rb") as stream:
             raw = tomllib.load(stream)
         execution = raw.get("execution", {})
+        if not isinstance(execution, dict):
+            raise ValueError("execution policy must be a TOML table")
+        configured_environment = execution.get(
+            "container_environment",
+            {
+                "HOME": "/work/home",
+                "TMPDIR": "/work/tmp",
+                "XDG_CACHE_HOME": "/work/cache",
+                "FOUNDRY_OUT": "/work/foundry-out",
+                "FOUNDRY_CACHE_PATH": "/work/foundry-cache",
+                "CARGO_TARGET_DIR": "/work/cargo-target",
+                "NO_COLOR": "1",
+            },
+        )
+        if not isinstance(configured_environment, dict):
+            raise ValueError("execution container_environment must be a TOML table")
+        environment_allowlist = execution.get("environment_allowlist", ["LANG", "LC_ALL", "PATH"])
+        if not isinstance(environment_allowlist, list) or any(
+            not isinstance(item, str) for item in environment_allowlist
+        ):
+            raise ValueError("execution environment_allowlist must be a string array")
         return cls(
             allow_host_execution=bool(execution.get("allow_host_execution", False)),
             allow_network=bool(execution.get("allow_network", False)),
@@ -49,7 +97,13 @@ class ExecutionPolicy:
             timeout_seconds=int(execution.get("timeout_seconds", 30)),
             max_output_bytes=int(execution.get("max_output_bytes", 1_000_000)),
             docker_image=execution.get("docker_image"),
-            environment_allowlist=list(execution.get("environment_allowlist", ["LANG", "LC_ALL", "PATH"])),
+            docker_user=str(execution.get("docker_user", "65532:65532")),
+            docker_work_bytes=int(execution.get("docker_work_bytes", 1_073_741_824)),
+            environment_allowlist=list(environment_allowlist),
+            container_environment={
+                str(key): str(value)
+                for key, value in configured_environment.items()
+            },
         )
 
 
@@ -116,6 +170,15 @@ class CommandRunner:
     def _blocked_capability(self, command: list[str]) -> str | None:
         executable = Path(command[0]).name.lower()
         arguments = {item.lower() for item in command[1:]}
+        opaque_shells = {"sh", "bash", "dash", "zsh", "fish", "cmd", "powershell", "pwsh"}
+        opaque_flags = {"-c", "--command", "/c", "-command"}
+        has_opaque_flag = bool(arguments & opaque_flags) or any(
+            re.fullmatch(r"-[a-z]*c[a-z]*", argument) is not None
+            or argument.startswith("--command=")
+            for argument in arguments
+        )
+        if executable in opaque_shells and has_opaque_flag:
+            return "opaque shell command strings are not allowed; use an argv-native verifier"
         git_writes = {
             "add",
             "am",
@@ -135,13 +198,17 @@ class CommandRunner:
             "switch",
             "tag",
         }
-        if executable == "git" and not self.policy.allow_git_writes and arguments & git_writes:
-            return "git mutation is not allowed by policy"
+        if executable == "git" and not self.policy.allow_git_writes:
+            if arguments & git_writes:
+                return "git mutation is not allowed by policy"
+            return "target-context Git execution is not allowed by policy"
         if not self.policy.allow_live_chain:
             if "--broadcast" in arguments:
                 return "live-chain broadcast is not allowed by policy"
             if executable == "cast" and arguments & {"send", "publish", "mktx"}:
                 return "live-chain transaction tooling is not allowed by policy"
+            if executable == "forge" and "create" in arguments:
+                return "forge create is not allowed without live-chain permission"
         return None
 
     def _run_host(self, command: list[str], cwd: Path, stdin: bytes) -> CommandResult:
@@ -186,6 +253,23 @@ class CommandRunner:
         if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.policy.docker_image):
             return CommandResult(command, None, b"", b"", 0, "docker image must be pinned by SHA-256 digest")
         network = "bridge" if self.policy.allow_network else "none"
+        sensitive = re.compile(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH|PRIVATE|API[_-]?KEY", re.I)
+        container_environment = dict(self.policy.container_environment)
+        for key, value in self._safe_environment().items():
+            if key == "PATH":
+                continue
+            container_environment.setdefault(key, value)
+        if not self.policy.allow_secret_environment:
+            blocked_keys = [key for key in container_environment if sensitive.search(key)]
+            if blocked_keys:
+                return CommandResult(
+                    command,
+                    None,
+                    b"",
+                    b"",
+                    0,
+                    f"secret-like container environment is not allowed: {sorted(blocked_keys)}",
+                )
         docker_command = [
             docker,
             "run",
@@ -194,17 +278,21 @@ class CommandRunner:
             "--network",
             network,
             "--read-only",
+            "--user",
+            self.policy.docker_user,
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
             "--pids-limit=256",
             "--memory=2g",
-            "--tmpfs=/tmp:rw,noexec,nosuid,size=256m",
+            "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777",
+            f"--tmpfs=/work:rw,exec,nosuid,nodev,size={self.policy.docker_work_bytes},mode=1777",
             "--mount",
             f"type=bind,src={cwd},dst=/workspace,readonly",
             "--workdir=/workspace",
-            self.policy.docker_image,
-            *command,
         ]
+        for key in sorted(container_environment):
+            docker_command.extend(["--env", f"{key}={container_environment[key]}"])
+        docker_command.extend([self.policy.docker_image, *command])
         return self._run_host_docker(docker_command, cwd, stdin)
 
     def _run_host_docker(self, command: list[str], cwd: Path, stdin: bytes) -> CommandResult:

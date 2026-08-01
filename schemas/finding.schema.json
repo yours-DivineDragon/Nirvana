@@ -19,7 +19,8 @@
     "impact",
     "reproduction_instructions",
     "remediation",
-    "regression_test"
+    "regression_test",
+    "supporting_evidence"
   ],
   "properties": {
     "finding_id": {"type": "string", "pattern": "^F-[A-Za-z0-9._-]+$"},
@@ -38,6 +39,13 @@
     "reproduction_instructions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "remediation": {"type": "string", "minLength": 1},
     "regression_test": {"type": "string", "minLength": 1},
+    "supporting_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"}
+    },
+    "reproducer_evidence_id": {"type": ["string", "null"], "pattern": "^E-[A-Za-z0-9._-]+$"},
     "novelty": {
       "enum": ["exact_duplicate", "known_unfixed_issue", "variant", "new_instance", "novel_mechanism", "uncertain_novelty"]
     },

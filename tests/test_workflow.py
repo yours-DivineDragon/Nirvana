@@ -23,6 +23,7 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(scope["evidence_ceiling"], "localised")
             self.assertEqual(report["target_snapshot_sha256"], scope["target_snapshot_sha256"])
             self.assertEqual(report["verified_evidence"], [])
+            self.assertEqual(report["corroborated_evidence"], [])
             self.assertEqual(EvidenceLedger(result.run_directory / "evidence.jsonl").verify(), 4)
 
 
