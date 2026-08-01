@@ -168,7 +168,8 @@ def build_coverage_schedule(
                 if item.threat_lens == lens
                 or bool(set(item.graph_slice) & set(graph_slice))
             )
-            task_id = f"C-{sha256_bytes(f'{flow.flow_id}\0{lens}'.encode())[:18]}"
+            task_identity = f"{flow.flow_id}\0{lens}".encode()
+            task_id = f"C-{sha256_bytes(task_identity)[:18]}"
             tasks.append(
                 CoverageTask(
                     task_id=task_id,
