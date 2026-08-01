@@ -34,7 +34,7 @@ class DifferentialTests(unittest.TestCase):
             [item["language"] for item in report.implementations], ["python", "python"]
         )
         self.assertTrue(all(item["source_sha256"] for item in report.implementations))
-        self.assertEqual(report.to_dict()["schema_version"], "1.1.0")
+        self.assertEqual(report.to_dict()["schema_version"], "1.2.0")
 
     def test_seeded_fuzzing_extends_the_corpus_deterministically(self) -> None:
         manifest = replace(
@@ -73,6 +73,17 @@ class DifferentialTests(unittest.TestCase):
                 for mismatch in report.mismatches
             )
         )
+
+    def test_fuzz_budget_shortfall_is_reported(self) -> None:
+        manifest = replace(
+            DifferentialManifest.load(FIXTURE / "manifest.toml"),
+            fuzz_cases=32,
+            fuzz_seed=20260801,
+        )
+        report = compare(manifest, CommandRunner(ExecutionPolicy(), ExecutionMode.DENY))
+        self.assertEqual(report.requested_fuzz_case_count, 32)
+        self.assertEqual(report.fuzz_case_count, 8)
+        self.assertIn("generated 8 of 32 requested fuzz cases", report.warnings[0])
 
 
 if __name__ == "__main__":

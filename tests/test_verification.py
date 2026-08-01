@@ -1,7 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from nirvana.contracts import ContractValidationError
-from nirvana.verification import ExecutionRequest
+from nirvana.verification import ExecutionRequest, snapshot_harness
 
 
 def request() -> dict:
@@ -27,6 +29,11 @@ def request() -> dict:
         "command": ["pytest", "-q", "test_exploit.py"],
         "expected_return_codes": [0],
         "tool_version": "pytest-9",
+        "negative_control": {
+            "target_root": "/tmp/nirvana-patched-target",
+            "changed_files": ["src/Contract.sol"],
+            "expected_return_codes": [1],
+        },
     }
 
 
@@ -48,6 +55,32 @@ class VerificationContractTests(unittest.TestCase):
         value["trust_me"] = True
         with self.assertRaises(ContractValidationError):
             ExecutionRequest.from_dict(value)
+
+    def test_executable_request_requires_negative_control(self) -> None:
+        value = request()
+        del value["negative_control"]
+        with self.assertRaisesRegex(ValueError, "requires a patched-target negative control"):
+            ExecutionRequest.from_dict(value)
+
+    def test_regex_assertions_are_not_supported(self) -> None:
+        value = request()
+        value["assertions"][0]["operator"] = "regex"
+        with self.assertRaisesRegex(ValueError, "must be one of"):
+            ExecutionRequest.from_dict(value)
+
+    def test_adapter_executable_must_resolve_inside_the_sandbox(self) -> None:
+        value = request()
+        value["command"] = ["./pytest"]
+        with self.assertRaisesRegex(ValueError, "bare tool name"):
+            ExecutionRequest.from_dict(value)
+
+    def test_harness_rejects_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "test.py").write_text("assert True\n")
+            (root / "escape").symlink_to("/etc/passwd")
+            with self.assertRaisesRegex(ValueError, "regular files only"):
+                snapshot_harness(root)
 
 
 if __name__ == "__main__":

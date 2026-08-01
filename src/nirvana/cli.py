@@ -13,6 +13,7 @@ from .intake import IntakePolicy
 from .ledger import EvidenceLedger
 from .policy import CommandRunner, ExecutionMode, ExecutionPolicy
 from .util import atomic_write_json
+from .verification import snapshot_harness
 from .workflow import audit
 
 
@@ -21,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.2.0")
+    parser.add_argument("--version", action="version", version="nirvana 0.3.0")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -64,14 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_verify.add_argument("run_directory", type=Path)
     evidence_verify.add_argument("evidence_id")
     _add_execution_options(evidence_verify)
-    evidence_corroborate = evidence_commands.add_parser(
-        "corroborate",
-        help="raise the structural ceiling from independent deterministic artifacts",
-    )
-    evidence_corroborate.add_argument("run_directory", type=Path)
-    evidence_corroborate.add_argument("hypothesis_id")
-    evidence_corroborate.add_argument("evidence_ids", nargs="+")
 
+    harness = commands.add_parser(
+        "harness", help="inspect an auditor-owned verifier harness"
+    )
+    harness_commands = harness.add_subparsers(dest="harness_command", required=True)
+    harness_hash = harness_commands.add_parser(
+        "hash", help="hash a symlink-free harness directory"
+    )
+    harness_hash.add_argument("path", type=Path)
     finding = commands.add_parser("finding", help="validate and confirm an evidence-gated finding")
     finding_commands = finding.add_subparsers(dest="finding_command", required=True)
     finding_confirm = finding_commands.add_parser("confirm")
@@ -133,12 +135,6 @@ def main(argv: list[str] | None = None) -> int:
             board = HypothesisBoard(args.run_directory)
             if args.evidence_command == "import":
                 evidence_record = board.import_evidence(args.path)
-            elif args.evidence_command == "corroborate":
-                corroborated = board.corroborate_evidence(
-                    args.hypothesis_id, args.evidence_ids
-                )
-                print(" ".join(item.evidence_id for item in corroborated))
-                return 0
             else:
                 policy = ExecutionPolicy.load(args.policy)
                 runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
@@ -151,6 +147,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "finding":
             confirmed = HypothesisBoard(args.run_directory).confirm_finding(args.path)
             print(confirmed.finding_id)
+            return 0
+        if args.command == "harness":
+            print(json.dumps(snapshot_harness(args.path).to_dict(), indent=2, sort_keys=True))
             return 0
         if args.command == "ledger":
             count = EvidenceLedger(args.path).verify()
@@ -166,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"cases: {report.case_count}; mismatches: {len(report.mismatches)}; "
                 f"blocked executions: {report.blocked_executions}"
             )
+            for warning in report.warnings:
+                print(f"warning: {warning}", file=sys.stderr)
             return 0
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)

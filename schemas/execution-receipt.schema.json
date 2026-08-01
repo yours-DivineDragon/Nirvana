@@ -9,23 +9,17 @@
     "evidence_id",
     "target",
     "runner",
+    "harness",
+    "negative_control",
     "request",
     "result"
   ],
   "properties": {
-    "schema_version": {"const": "1.1.0"},
+    "schema_version": {"const": "1.2.0"},
     "created_at": {"type": "string"},
     "evidence_id": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"},
     "replay_of": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "target": {
-      "type": "object",
-      "required": ["root", "snapshot_sha256"],
-      "properties": {
-        "root": {"type": "string", "minLength": 1},
-        "snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
-      },
-      "additionalProperties": false
-    },
+    "target": {"$ref": "#/$defs/target"},
     "runner": {
       "type": "object",
       "required": ["mode", "policy_sha256", "docker_image"],
@@ -33,6 +27,47 @@
         "mode": {"enum": ["deny", "host", "docker"]},
         "policy_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "docker_image": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "harness": {
+      "type": ["object", "null"],
+      "required": ["root", "snapshot_sha256", "file_count", "total_bytes"],
+      "properties": {
+        "root": {"type": "string", "minLength": 1},
+        "snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "file_count": {"type": "integer", "minimum": 1},
+        "total_bytes": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "negative_control": {
+      "type": ["object", "null"],
+      "required": ["target", "changed_files", "expected_return_codes", "result"],
+      "properties": {
+        "target": {"$ref": "#/$defs/target"},
+        "changed_files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["path", "target_sha256", "control_sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "target_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "control_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "expected_return_codes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"type": "integer", "minimum": 0, "maximum": 255}
+        },
+        "result": {"$ref": "#/$defs/result"}
       },
       "additionalProperties": false
     },
@@ -53,6 +88,8 @@
         "replay_mode",
         "tool_version",
         "assumptions",
+        "harness",
+        "negative_control",
         "stdin_base64",
         "stdin_sha256"
       ],
@@ -64,15 +101,40 @@
         "summary": {"type": "string"},
         "adapter": {"type": "string"},
         "claim": {"type": "object"},
-        "assertions": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        "assertions": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "object"}},
         "command": {"type": "array", "items": {"type": "string"}},
         "cwd": {"type": "string"},
         "expected_return_codes": {"type": "array", "items": {"type": "integer"}},
         "replay_mode": {"enum": ["assertions", "strict"]},
         "tool_version": {"type": "string"},
         "assumptions": {"type": "array", "items": {"type": "string"}},
+        "harness": {"type": ["object", "null"]},
+        "negative_control": {"type": ["object", "null"]},
         "stdin_base64": {"type": "string"},
         "stdin_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "result": {"$ref": "#/$defs/result"}
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "required": ["root", "snapshot_sha256"],
+      "properties": {
+        "root": {"type": "string", "minLength": 1},
+        "snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "assertionResult": {
+      "type": "object",
+      "required": ["assertion_id", "passed", "observed_sha256", "error"],
+      "properties": {
+        "assertion_id": {"type": "string"},
+        "passed": {"type": "boolean"},
+        "observed_sha256": {"type": ["string", "null"]},
+        "error": {"type": ["string", "null"]}
       },
       "additionalProperties": false
     },
@@ -103,17 +165,8 @@
         "assertions": {
           "type": "array",
           "minItems": 1,
-          "items": {
-            "type": "object",
-            "required": ["assertion_id", "passed", "observed_sha256", "error"],
-            "properties": {
-              "assertion_id": {"type": "string"},
-              "passed": {"type": "boolean"},
-              "observed_sha256": {"type": ["string", "null"]},
-              "error": {"type": ["string", "null"]}
-            },
-            "additionalProperties": false
-          }
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/assertionResult"}
         }
       },
       "additionalProperties": false

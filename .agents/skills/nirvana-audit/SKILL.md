@@ -56,15 +56,20 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 2. Prefer deterministic tools and executable evaluators over model judgment.
 3. Do not execute an untrusted target on the host. Use a reviewed policy and pinned Docker image; if the sandbox is unavailable, continue source analysis and lower the evidence ceiling.
 4. Preserve the exact command array, tool version, target revision, assumptions, output hashes, minimized input, and reproduction steps.
-5. Use `assets/evidence.json` and `nirvana evidence import` only for non-executable analyst material. Imported JSON cannot self-assert executable evidence.
-6. For structural-only work, import exact hashed analyzer artifacts from at least two independent supported adapters, including analyzer/version, target snapshot, and the exact hypothesis claim. Then run:
+5. Use `assets/evidence.json` and `nirvana evidence import` only for `localised` analyst material. Imported JSON cannot self-assert structural or executable evidence and cannot raise a reporting ceiling.
+6. For structural-only work, create separate `structurally_confirmed` execution requests for at least two of solc-AST, Slither, and Semgrep. Run and replay each supported analyzer through Nirvana:
 
    ```bash
-   nirvana evidence corroborate <run-directory> <hypothesis-id> <evidence-id-1> <evidence-id-2>
+   nirvana evidence run <run-directory> <structural-request.json> \
+     --policy <policy.toml> --execution-mode docker
+   nirvana evidence verify <run-directory> <evidence-id> \
+     --policy <policy.toml> --execution-mode docker
    ```
 
-   This may raise the ceiling only to `structurally_confirmed`; it cannot support high or critical severity.
-7. For executable evidence, copy `assets/execution-request.json`. Copy the hypothesis property/violation exactly, select a supported adapter, declare predicates that identify the specific verifier decision, review every argument, and run it through a pinned sandbox:
+   Only two distinct runner-minted and replay-verified structural adapters may raise the ceiling to `structurally_confirmed`; this tier cannot support high or critical severity.
+7. Keep PoCs outside the audited target. Create a symlink-free auditor harness, inspect it with `nirvana harness hash <directory>`, and reference its absolute path in the request. The sandbox mounts it read-only at `/harness`; the receipt records its complete digest.
+8. Create a separate patched copy of the target for the negative control. Change only the files required to remove the suspected violation. List the exact changed paths and the control's expected return code in the request. Nirvana will reject an incomplete, extra, or unchanged delta.
+9. For executable evidence, copy `assets/execution-request.json`. Copy the hypothesis property/violation exactly, select a supported adapter, declare fixed-string or JSON predicates that identify the specific verifier decision, review every argument, and run it through a pinned sandbox:
 
    ```bash
    nirvana evidence run <run-directory> <execution-request.json> \
@@ -73,9 +78,9 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
      --policy <policy.toml> --execution-mode docker
    ```
 
-8. Use the identical policy and execution mode for replay. Default assertion replay tolerates non-semantic output noise; use strict replay only for byte-deterministic tools. A successful replay raises the run ceiling to `executable`; a receipt that has not replayed cannot confirm a finding.
-9. The command must match its adapter. Never use `echo`, an opaque shell string, or deployment tooling as vulnerability evidence.
-10. Read `references/evidence.md` before promoting any evidence level.
+10. Nirvana runs the identical command, stdin, and predicates against the audited target and patched control. The original must satisfy all predicates; the control must execute with its declared return code and fail at least one. Use the identical policy and execution mode for replay. Default assertion replay tolerates non-semantic output noise; use strict replay only for byte-deterministic tools.
+11. The command must be a bare sandbox-resolved tool name matching its adapter. Never use `echo`, a target-provided tool shim, an opaque shell string, or deployment tooling as vulnerability evidence.
+12. Read `references/evidence.md` before promoting any evidence level.
 
 ## Falsify, rescue, and deduplicate
 
@@ -87,7 +92,7 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 ## Confirm or retain
 
 1. Keep unproven candidates in the analyst queue. Never turn persuasive prose into evidence.
-2. High and critical severity normally require executable evidence or stronger.
+2. High and critical severity normally require paired, negative-control-verified executable evidence or stronger.
 3. Copy `assets/finding.json`, list the exact supporting evidence IDs, bind an executable reproducer ID when applicable, fill the complete causal and reproduction contract, then run:
 
    ```bash

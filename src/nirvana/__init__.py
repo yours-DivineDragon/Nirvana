@@ -3,4 +3,4 @@
 from .models import EvidenceLevel, Finding, Hypothesis
 
 __all__ = ["EvidenceLevel", "Finding", "Hypothesis"]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

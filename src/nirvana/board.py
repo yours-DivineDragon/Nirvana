@@ -11,15 +11,20 @@ from .policy import CommandRunner, ExecutionMode
 from .util import atomic_write_json, sha256_file
 from .verification import (
     ExecutionRequest,
+    HarnessSnapshot,
+    MAX_CONTROL_CHANGED_FILES,
+    NegativeControlExecution,
     ReplayMode,
     evaluate_assertions,
     execution_receipt,
     load_receipt,
+    negative_control_is_accepted,
     policy_sha256,
     request_from_receipt,
     resolve_execution_cwd,
     result_is_accepted,
     result_signature,
+    snapshot_harness,
 )
 
 
@@ -49,9 +54,11 @@ class HypothesisBoard:
     def import_evidence(self, path: Path) -> EvidenceRecord:
         value = self._read_json(path)
         evidence = EvidenceRecord.from_dict(value)
-        if EVIDENCE_RANK[evidence.level] >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
+        if EVIDENCE_RANK[evidence.level] >= EVIDENCE_RANK[
+            EvidenceLevel.STRUCTURALLY_CONFIRMED
+        ]:
             raise ValueError(
-                "executable and stronger evidence must be minted by nirvana evidence run"
+                "structural and stronger evidence must be minted by nirvana evidence run"
             )
         if evidence.hypothesis_id is not None:
             self._require_known_hypothesis(evidence.hypothesis_id)
@@ -87,10 +94,45 @@ class HypothesisBoard:
         scope = self._load_scope()
         target_root = Path(scope.target_root).resolve(strict=True)
         self._require_target_snapshot(scope, target_root)
+        control = self._prepare_negative_control(request, scope, target_root)
+        harness_root, harness_snapshot = self._prepare_harness(
+            request, target_root, control[0] if control is not None else None
+        )
         cwd = resolve_execution_cwd(target_root, request.cwd)
-        result = runner.run(request.command, cwd, request.stdin.encode("utf-8"))
+        result = self._run_request(runner, request, cwd, harness_root)
         assertion_results = evaluate_assertions(request, result)
         target_unchanged = self._target_snapshot_matches(scope, target_root)
+        negative_control: NegativeControlExecution | None = None
+        control_accepted = True
+        control_unchanged = True
+        if control is not None:
+            control_root, control_scope, changed_files = control
+            control_cwd = resolve_execution_cwd(control_root, request.cwd)
+            control_result = self._run_request(
+                runner, request, control_cwd, harness_root
+            )
+            control_assertions = evaluate_assertions(request, control_result)
+            control_unchanged = self._target_snapshot_matches(
+                control_scope, control_root
+            )
+            control_accepted = negative_control_is_accepted(
+                control_result,
+                request.negative_control.expected_return_codes,
+                control_assertions,
+            )
+            negative_control = NegativeControlExecution(
+                target_root=str(control_root),
+                snapshot_sha256=control_scope.target_snapshot_sha256,
+                changed_files=changed_files,
+                expected_return_codes=list(
+                    request.negative_control.expected_return_codes
+                ),
+                result=control_result,
+                assertion_results=control_assertions,
+            )
+        harness_unchanged = self._harness_snapshot_matches(
+            harness_root, harness_snapshot
+        )
         receipt = execution_receipt(
             request,
             runner,
@@ -98,12 +140,17 @@ class HypothesisBoard:
             assertion_results,
             target_root,
             scope.target_snapshot_sha256,
+            harness_snapshot=harness_snapshot,
+            negative_control=negative_control,
         )
         if (
             not result_is_accepted(
                 result, request.expected_return_codes, assertion_results
             )
             or not target_unchanged
+            or not harness_unchanged
+            or not control_unchanged
+            or not control_accepted
         ):
             attempt = 1 + sum(
                 record["payload"].get("event") == "execution_rejected"
@@ -120,6 +167,9 @@ class HypothesisBoard:
                 request.expected_return_codes,
                 target_unchanged,
                 assertion_results,
+                harness_unchanged=harness_unchanged,
+                control_unchanged=control_unchanged,
+                control_accepted=control_accepted,
             )
             self.ledger.append(
                 {
@@ -159,6 +209,22 @@ class HypothesisBoard:
                 "replay_mode": request.replay_mode.value,
                 "expected_return_codes": list(request.expected_return_codes),
                 "assertions": assertion_results,
+                "harness_snapshot_sha256": (
+                    harness_snapshot.snapshot_sha256
+                    if harness_snapshot is not None
+                    else None
+                ),
+                "negative_control_verified": negative_control is not None,
+                "negative_control_snapshot_sha256": (
+                    negative_control.snapshot_sha256
+                    if negative_control is not None
+                    else None
+                ),
+                "negative_control_changed_files": (
+                    [item["path"] for item in negative_control.changed_files]
+                    if negative_control is not None
+                    else []
+                ),
                 **signature,
             },
         )
@@ -208,11 +274,52 @@ class HypothesisBoard:
         if recorded_runner.get("policy_sha256") != policy_sha256(runner):
             raise ValueError("replay policy differs from the original execution")
         self._require_target_snapshot(scope, target_root)
+        control = self._prepare_negative_control(request, scope, target_root)
+        harness_root, harness_snapshot = self._prepare_harness(
+            request, target_root, control[0] if control is not None else None
+        )
+        expected_harness = (
+            harness_snapshot.to_dict() if harness_snapshot is not None else None
+        )
+        if receipt.get("harness") != expected_harness:
+            raise ValueError("execution receipt binds a different auditor harness")
+        self._validate_control_receipt_binding(receipt, request, control)
 
         cwd = resolve_execution_cwd(target_root, request.cwd)
-        result = runner.run(request.command, cwd, request.stdin.encode("utf-8"))
+        result = self._run_request(runner, request, cwd, harness_root)
         assertion_results = evaluate_assertions(request, result)
         target_unchanged = self._target_snapshot_matches(scope, target_root)
+        negative_control: NegativeControlExecution | None = None
+        control_accepted = True
+        control_unchanged = True
+        if control is not None:
+            control_root, control_scope, changed_files = control
+            control_cwd = resolve_execution_cwd(control_root, request.cwd)
+            control_result = self._run_request(
+                runner, request, control_cwd, harness_root
+            )
+            control_assertions = evaluate_assertions(request, control_result)
+            control_unchanged = self._target_snapshot_matches(
+                control_scope, control_root
+            )
+            control_accepted = negative_control_is_accepted(
+                control_result,
+                request.negative_control.expected_return_codes,
+                control_assertions,
+            )
+            negative_control = NegativeControlExecution(
+                target_root=str(control_root),
+                snapshot_sha256=control_scope.target_snapshot_sha256,
+                changed_files=changed_files,
+                expected_return_codes=list(
+                    request.negative_control.expected_return_codes
+                ),
+                result=control_result,
+                assertion_results=control_assertions,
+            )
+        harness_unchanged = self._harness_snapshot_matches(
+            harness_root, harness_snapshot
+        )
         replay_number = 1 + sum(
             record["payload"].get("event") in {"evidence_verified", "evidence_replay_failed"}
             and record["payload"].get("evidence_id") == evidence.evidence_id
@@ -226,6 +333,8 @@ class HypothesisBoard:
             target_root,
             scope.target_snapshot_sha256,
             replay_of=evidence.artifact_sha256,
+            harness_snapshot=harness_snapshot,
+            negative_control=negative_control,
         )
         replay_artifact, replay_digest = self._write_receipt(
             evidence.evidence_id, f"replay-{replay_number}.json", replay
@@ -239,12 +348,43 @@ class HypothesisBoard:
             request.replay_mode is ReplayMode.ASSERTIONS
             or current_signature == original_signature
         )
+        control_signature_matches = True
+        control_decision_matches = True
+        if negative_control is not None:
+            original_control = receipt.get("negative_control") or {}
+            original_assertions = original_control.get("result", {}).get(
+                "assertions", []
+            )
+            original_decision = [
+                (item.get("assertion_id"), item.get("passed"))
+                for item in original_assertions
+            ]
+            replay_decision = [
+                (item.get("assertion_id"), item.get("passed"))
+                for item in negative_control.assertion_results
+            ]
+            control_decision_matches = replay_decision == original_decision
+        if negative_control is not None and request.replay_mode is ReplayMode.STRICT:
+            original_control = receipt.get("negative_control") or {}
+            original_control_signature = {
+                key: original_control.get("result", {}).get(key)
+                for key in result_signature(negative_control.result)
+            }
+            control_signature_matches = (
+                result_signature(negative_control.result)
+                == original_control_signature
+            )
         verified = (
             result_is_accepted(
                 result, request.expected_return_codes, assertion_results
             )
             and target_unchanged
             and signature_matches
+            and harness_unchanged
+            and control_unchanged
+            and control_accepted
+            and control_decision_matches
+            and control_signature_matches
         )
         event = {
             "event": "evidence_verified" if verified else "evidence_replay_failed",
@@ -255,6 +395,22 @@ class HypothesisBoard:
             "result": current_signature,
             "assertions": assertion_results,
             "replay_mode": request.replay_mode.value,
+            "harness_snapshot_sha256": (
+                harness_snapshot.snapshot_sha256
+                if harness_snapshot is not None
+                else None
+            ),
+            "negative_control": (
+                {
+                    "snapshot_sha256": negative_control.snapshot_sha256,
+                    "result": result_signature(negative_control.result),
+                    "assertions": negative_control.assertion_results,
+                    "accepted": control_accepted,
+                    "decision_matches": control_decision_matches,
+                }
+                if negative_control is not None
+                else None
+            ),
         }
         payloads = [event]
         next_ceiling: EvidenceLevel | None = None
@@ -300,77 +456,12 @@ class HypothesisBoard:
             raise ValueError("replay did not satisfy the recorded verification contract")
         return evidence
 
-    def corroborate_evidence(
-        self, hypothesis_id: str, evidence_ids: list[str]
-    ) -> list[EvidenceRecord]:
-        hypothesis = self._hypothesis_by_id(hypothesis_id)
-        if len(evidence_ids) < 2 or len(set(evidence_ids)) != len(evidence_ids):
-            raise ValueError("structural corroboration requires at least two unique evidence ids")
-        evidence = [self._evidence_by_id(item) for item in evidence_ids]
-        scope = self._load_scope()
-        expected_claim = {
-            "security_property": hypothesis.security_property,
-            "suspected_violation": hypothesis.suspected_violation,
-        }
-        allowed_adapters = {"solc-ast", "slither", "semgrep"}
-        adapters: set[str] = set()
-        for item in evidence:
-            if item.hypothesis_id != hypothesis_id:
-                raise ValueError("structural evidence belongs to a different hypothesis")
-            if item.level is not EvidenceLevel.STRUCTURALLY_CONFIRMED:
-                raise ValueError("corroboration accepts structural evidence only")
-            adapter = str(item.metadata.get("adapter", ""))
-            if adapter not in allowed_adapters:
-                raise ValueError(f"unsupported structural analyzer provenance: {adapter!r}")
-            if item.source != f"deterministic:{adapter}":
-                raise ValueError("structural evidence source does not match its analyzer")
-            if not item.tool_version:
-                raise ValueError("structural evidence requires an analyzer version")
-            if item.metadata.get("target_snapshot_sha256") != scope.target_snapshot_sha256:
-                raise ValueError("structural evidence targets a different repository snapshot")
-            if item.metadata.get("claim") != expected_claim:
-                raise ValueError("structural evidence proves a different claim")
-            if item.artifact_path is None or item.artifact_sha256 is None:
-                raise ValueError("structural evidence lacks its hashed analyzer artifact")
-            artifact = Path(item.artifact_path).resolve(strict=True)
-            if sha256_file(artifact) != item.artifact_sha256:
-                raise ValueError("structural analyzer artifact hash does not match")
-            adapters.add(adapter)
-        if len(adapters) < 2:
-            raise ValueError("structural corroboration requires independent analyzer adapters")
-
-        ids = sorted(evidence_ids)
-        payloads: list[dict[str, Any]] = [
-            {
-                "event": "structural_corroboration_verified",
-                "hypothesis_id": hypothesis_id,
-                "evidence_ids": ids,
-                "adapters": sorted(adapters),
-                "mode": "artifact-corroboration",
-            }
-        ]
-        if EVIDENCE_RANK[scope.evidence_ceiling] < EVIDENCE_RANK[
-            EvidenceLevel.STRUCTURALLY_CONFIRMED
-        ]:
-            previous = scope.evidence_ceiling
-            scope.evidence_ceiling = EvidenceLevel.STRUCTURALLY_CONFIRMED
-            payloads.append(
-                {
-                    "event": "evidence_ceiling_raised",
-                    "previous": previous.value,
-                    "current": scope.evidence_ceiling.value,
-                    "basis": ids,
-                }
-            )
-        self.ledger.append_many(payloads)
-        atomic_write_json(self.run_directory / "scope.json", scope)
-        self._refresh_report()
-        return evidence
-
     def confirm_finding(self, path: Path) -> Finding:
         value = self._read_json(path)
         finding = Finding.from_dict(value)
         scope = self._load_scope()
+        target_root = Path(scope.target_root).resolve(strict=True)
+        self._require_target_snapshot(scope, target_root)
         if EVIDENCE_RANK[finding.evidence_level] > EVIDENCE_RANK[scope.evidence_ceiling]:
             raise ValueError(
                 "finding evidence level exceeds the run evidence ceiling "
@@ -380,18 +471,10 @@ class HypothesisBoard:
         if finding.security_property != hypothesis.security_property:
             raise ValueError("finding security property does not match its hypothesis")
         verified_evidence = self._currently_verified_evidence_ids()
-        corroborated_evidence = {
-            str(evidence_id)
-            for record in self.ledger.records()
-            if record["payload"].get("event") == "structural_corroboration_verified"
-            and record["payload"].get("mode") == "artifact-corroboration"
-            for evidence_id in record["payload"].get("evidence_ids", [])
-        }
-        accepted_evidence = verified_evidence | corroborated_evidence
-        if not set(finding.supporting_evidence) <= accepted_evidence:
-            missing = sorted(set(finding.supporting_evidence) - accepted_evidence)
+        if not set(finding.supporting_evidence) <= verified_evidence:
+            missing = sorted(set(finding.supporting_evidence) - verified_evidence)
             raise ValueError(
-                "every supporting evidence id must be replay-verified or structurally corroborated: "
+                "every supporting evidence id must be runner-minted and replay-verified: "
                 f"{missing}"
             )
         evidence_by_id = {
@@ -411,6 +494,7 @@ class HypothesisBoard:
             artifact = Path(item.artifact_path).resolve(strict=True)
             if sha256_file(artifact) != item.artifact_sha256:
                 raise ValueError("finding supporting evidence artifact hash does not match")
+            self._require_auxiliary_inputs_current(item, scope, target_root)
         if any(item.hypothesis_id != finding.hypothesis_id for item in supporting):
             raise ValueError("finding supporting evidence belongs to a different hypothesis")
         if any(
@@ -427,13 +511,27 @@ class HypothesisBoard:
         ]:
             raise ValueError("finding evidence level exceeds its recorded supporting evidence")
         if finding.evidence_level is EvidenceLevel.STRUCTURALLY_CONFIRMED:
-            adapters = {str(item.metadata.get("adapter")) for item in supporting}
+            structural_adapters = {"solc-ast", "slither", "semgrep"}
+            structural_support = [
+                item
+                for item in supporting
+                if item.level is EvidenceLevel.STRUCTURALLY_CONFIRMED
+                and item.metadata.get("runner_minted") is True
+                and item.metadata.get("adapter") in structural_adapters
+            ]
+            adapters = {str(item.metadata.get("adapter")) for item in structural_support}
             if len(adapters) < 2:
-                raise ValueError("structural findings require two independent verified adapters")
+                raise ValueError(
+                    "structural findings require two independent runner-verified structural adapters"
+                )
         if finding.reproducer_evidence_id is not None:
             reproducer = evidence_by_id[finding.reproducer_evidence_id]
             if EVIDENCE_RANK[reproducer.level] < EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
                 raise ValueError("finding reproducer evidence is not executable")
+            if reproducer.metadata.get("negative_control_verified") is not True:
+                raise ValueError(
+                    "finding reproducer lacks a runner-verified negative control"
+                )
         if finding.finding_id in self._ids_for_event("finding_confirmed", "finding_id"):
             raise ValueError(f"finding already exists: {finding.finding_id}")
         self.ledger.append(
@@ -484,6 +582,7 @@ class HypothesisBoard:
     ) -> list[str]:
         verified = self._currently_verified_evidence_ids()
         verified.add(current_evidence_id)
+        structural_adapters = {"solc-ast", "slither", "semgrep"}
         by_adapter: dict[str, str] = {}
         for record in self.ledger.records():
             payload = record["payload"]
@@ -498,7 +597,7 @@ class HypothesisBoard:
             ):
                 continue
             adapter = str(evidence.metadata.get("adapter", ""))
-            if adapter:
+            if adapter in structural_adapters:
                 by_adapter.setdefault(adapter, evidence.evidence_id)
         if len(by_adapter) < 2:
             return []
@@ -533,6 +632,171 @@ class HypothesisBoard:
         if len(matches) != 1:
             raise ValueError(f"duplicate evidence records exist: {evidence_id}")
         return matches[0]
+
+    def _prepare_harness(
+        self,
+        request: ExecutionRequest,
+        target_root: Path,
+        control_root: Path | None,
+    ) -> tuple[Path | None, HarnessSnapshot | None]:
+        if request.harness is None:
+            return None, None
+        root = Path(request.harness.path).resolve(strict=True)
+        if self._paths_overlap(root, target_root) or (
+            control_root is not None and self._paths_overlap(root, control_root)
+        ):
+            raise ValueError(
+                "auditor harness must be outside the audited and negative-control targets"
+            )
+        return root, snapshot_harness(root)
+
+    def _require_auxiliary_inputs_current(
+        self,
+        evidence: EvidenceRecord,
+        scope: ScopeManifest,
+        target_root: Path,
+    ) -> None:
+        if evidence.metadata.get("runner_minted") is not True:
+            raise ValueError("finding supporting evidence was not runner-minted")
+        artifact = Path(evidence.artifact_path or "").resolve(strict=True)
+        receipt = load_receipt(artifact)
+        request = request_from_receipt(receipt)
+        control = self._prepare_negative_control(request, scope, target_root)
+        _, harness_snapshot = self._prepare_harness(
+            request, target_root, control[0] if control is not None else None
+        )
+        expected_harness = (
+            harness_snapshot.to_dict() if harness_snapshot is not None else None
+        )
+        if receipt.get("harness") != expected_harness:
+            raise ValueError("finding evidence auditor harness no longer matches its receipt")
+        self._validate_control_receipt_binding(receipt, request, control)
+
+    def _prepare_negative_control(
+        self,
+        request: ExecutionRequest,
+        scope: ScopeManifest,
+        target_root: Path,
+    ) -> tuple[Path, ScopeManifest, list[dict[str, str | None]]] | None:
+        if request.negative_control is None:
+            return None
+        control_root = Path(request.negative_control.target_root).resolve(strict=True)
+        if self._paths_overlap(control_root, target_root):
+            raise ValueError(
+                "negative control target must be separate from the audited target"
+            )
+        control_scope = RepositoryIntake(
+            max_file_bytes=scope.max_analysis_file_bytes,
+            ignored_directories=set(scope.excluded_directories),
+        ).inspect(control_root)
+        if not control_scope.snapshot_complete:
+            raise ValueError("negative control target snapshot is incomplete")
+        target_files = {item.path: item for item in scope.files}
+        control_files = {item.path: item for item in control_scope.files}
+        changed_files: list[dict[str, str | None]] = []
+        for relative in sorted(target_files.keys() | control_files.keys()):
+            target_item = target_files.get(relative)
+            control_item = control_files.get(relative)
+            target_signature = (
+                (target_item.kind, target_item.size, target_item.sha256)
+                if target_item is not None
+                else None
+            )
+            control_signature = (
+                (control_item.kind, control_item.size, control_item.sha256)
+                if control_item is not None
+                else None
+            )
+            if target_signature != control_signature:
+                if len(changed_files) >= MAX_CONTROL_CHANGED_FILES:
+                    raise ValueError(
+                        "negative control target delta exceeds the 64-file safety limit"
+                    )
+                changed_files.append(
+                    {
+                        "path": relative,
+                        "target_sha256": (
+                            target_item.sha256 if target_item is not None else None
+                        ),
+                        "control_sha256": (
+                            control_item.sha256 if control_item is not None else None
+                        ),
+                    }
+                )
+        actual_paths = [item["path"] for item in changed_files]
+        if actual_paths != sorted(request.negative_control.changed_files):
+            raise ValueError(
+                "negative control changed_files do not exactly match its target delta; "
+                f"expected {sorted(request.negative_control.changed_files)}, "
+                f"observed {actual_paths}"
+            )
+        return control_root, control_scope, changed_files
+
+    @staticmethod
+    def _validate_control_receipt_binding(
+        receipt: dict[str, Any],
+        request: ExecutionRequest,
+        control: tuple[Path, ScopeManifest, list[dict[str, str | None]]] | None,
+    ) -> None:
+        recorded = receipt.get("negative_control")
+        if control is None:
+            if recorded is not None:
+                raise ValueError("execution receipt has an unexpected negative control")
+            return
+        control_root, control_scope, changed_files = control
+        expected = {
+            "target": {
+                "root": str(control_root),
+                "snapshot_sha256": control_scope.target_snapshot_sha256,
+            },
+            "changed_files": changed_files,
+            "expected_return_codes": list(
+                request.negative_control.expected_return_codes
+            ),
+        }
+        if not isinstance(recorded, dict):
+            raise ValueError("execution receipt lacks its negative control")
+        observed = {
+            "target": recorded.get("target"),
+            "changed_files": recorded.get("changed_files"),
+            "expected_return_codes": recorded.get("expected_return_codes"),
+        }
+        if observed != expected:
+            raise ValueError("execution receipt binds a different negative control")
+
+    @staticmethod
+    def _run_request(
+        runner: CommandRunner,
+        request: ExecutionRequest,
+        cwd: Path,
+        harness_root: Path | None,
+    ):
+        if harness_root is None:
+            return runner.run(request.command, cwd, request.stdin.encode("utf-8"))
+        return runner.run(
+            request.command,
+            cwd,
+            request.stdin.encode("utf-8"),
+            harness_root,
+        )
+
+    @staticmethod
+    def _harness_snapshot_matches(
+        harness_root: Path | None, harness_snapshot: HarnessSnapshot | None
+    ) -> bool:
+        if harness_root is None or harness_snapshot is None:
+            return harness_root is None and harness_snapshot is None
+        try:
+            return (
+                snapshot_harness(harness_root).snapshot_sha256
+                == harness_snapshot.snapshot_sha256
+            )
+        except (OSError, ValueError):
+            return False
+
+    @staticmethod
+    def _paths_overlap(first: Path, second: Path) -> bool:
+        return first == second or first in second.parents or second in first.parents
 
     def _load_scope(self) -> ScopeManifest:
         value = self._read_json(
@@ -582,6 +846,10 @@ class HypothesisBoard:
         expected_return_codes: list[int],
         target_unchanged: bool,
         assertion_results: list[dict[str, Any]],
+        *,
+        harness_unchanged: bool = True,
+        control_unchanged: bool = True,
+        control_accepted: bool = True,
     ) -> str:
         if blocked_reason is not None:
             return f"execution was blocked: {blocked_reason}"
@@ -589,6 +857,8 @@ class HypothesisBoard:
             return "execution timed out"
         if not target_unchanged:
             return "execution changed the audited target snapshot"
+        if not harness_unchanged:
+            return "execution changed the auditor harness snapshot"
         if return_code not in expected_return_codes:
             return (
                 f"execution returned {return_code}; expected exactly "
@@ -601,9 +871,13 @@ class HypothesisBoard:
         ]
         if failed:
             return f"execution assertions failed: {', '.join(failed)}"
-        return (
-            "execution did not satisfy the verification contract"
-        )
+        if not control_unchanged:
+            return "execution changed the negative control target snapshot"
+        if not control_accepted:
+            return (
+                "negative control did not produce the declared opposite verifier decision"
+            )
+        return "execution did not satisfy the verification contract"
 
     def _ids_for_event(self, event: str, key: str) -> set[str]:
         container = {

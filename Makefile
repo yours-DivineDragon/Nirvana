@@ -13,6 +13,10 @@ check:
 	python3 -m json.tool schemas/execution-receipt.schema.json >/dev/null
 	python3 -m json.tool schemas/finding.schema.json >/dev/null
 	python3 -m json.tool schemas/differential-report.schema.json >/dev/null
+	python3 -m json.tool .agents/skills/nirvana-audit/assets/hypothesis.json >/dev/null
+	python3 -m json.tool .agents/skills/nirvana-audit/assets/evidence.json >/dev/null
+	python3 -m json.tool .agents/skills/nirvana-audit/assets/execution-request.json >/dev/null
+	python3 -m json.tool .agents/skills/nirvana-audit/assets/finding.json >/dev/null
 
 audit-fixture:
 	PYTHONPATH=src python3 -m nirvana audit tests/fixtures/evm --output nirvana-runs

@@ -14,9 +14,14 @@ from .util import canonical_json, jsonable, sha256_bytes, sha256_file, utc_now
 
 IGNORED_DIRECTORIES = {
     ".git",
+    ".anchor",
     ".nirvana",
+    ".pytest_cache",
     ".venv",
     "__pycache__",
+    "artifacts",
+    "broadcast",
+    "cache",
     "node_modules",
     "out",
     "build",
