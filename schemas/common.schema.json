@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/common.schema.json",
+  "$defs": {
+    "evidenceLevel": {
+      "enum": [
+        "hypothesis",
+        "localised",
+        "structurally_confirmed",
+        "executable",
+        "exploit_demonstrated",
+        "formally_established"
+      ]
+    },
+    "codeLocation": {
+      "type": "object",
+      "required": ["path", "line_start"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "line_start": {"type": "integer", "minimum": 1},
+        "line_end": {"type": ["integer", "null"], "minimum": 1},
+        "symbol": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

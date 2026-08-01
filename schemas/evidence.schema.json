@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/evidence.schema.json",
+  "title": "Nirvana evidence record",
+  "type": "object",
+  "required": ["evidence_id", "level", "kind", "summary", "source"],
+  "properties": {
+    "evidence_id": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"},
+    "hypothesis_id": {"type": ["string", "null"]},
+    "level": {"$ref": "common.schema.json#/$defs/evidenceLevel"},
+    "kind": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "artifact_path": {"type": ["string", "null"]},
+    "artifact_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "command": {"type": "array", "items": {"type": "string"}},
+    "tool_version": {"type": ["string", "null"]},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "metadata": {"type": "object"},
+    "created_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}

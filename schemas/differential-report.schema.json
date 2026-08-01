@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/differential-report.schema.json",
+  "title": "Nirvana differential report",
+  "type": "object",
+  "required": ["schema_version", "created_at", "spec_sha256", "corpus_sha256", "case_count", "mismatches", "blocked_executions"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "corpus_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "case_count": {"type": "integer", "minimum": 0},
+    "blocked_executions": {"type": "integer", "minimum": 0},
+    "mismatches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "input_sha256", "outcomes", "classification", "notes"],
+        "properties": {
+          "case_id": {"type": "string"},
+          "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "classification": {
+            "enum": ["unclassified", "harness_bug", "implementation_bug", "spec_ambiguity", "clear_but_unsafe_spec"]
+          },
+          "notes": {"type": "array", "items": {"type": "string"}},
+          "outcomes": {"type": "array", "minItems": 2, "items": {"type": "object"}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

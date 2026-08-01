@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tomllib
+from pathlib import Path
+
+from .board import HypothesisBoard
+from .differential import DifferentialManifest, compare
+from .doctor import doctor_report
+from .ledger import EvidenceLedger
+from .policy import CommandRunner, ExecutionMode, ExecutionPolicy
+from .util import atomic_write_json
+from .workflow import audit
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="nirvana",
+        description="Local, evidence-gated security research orchestration",
+    )
+    parser.add_argument("--version", action="version", version="nirvana 0.1.0")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
+    doctor.add_argument("--json", action="store_true", help="emit machine-readable output")
+
+    audit_parser = commands.add_parser("audit", help="perform safe intake and candidate generation")
+    audit_parser.add_argument("target", type=Path)
+    audit_parser.add_argument("--output", type=Path, default=Path("nirvana-runs"))
+
+    hypothesis = commands.add_parser("hypothesis", help="operate on the typed hypothesis board")
+    hypothesis_commands = hypothesis.add_subparsers(dest="hypothesis_command", required=True)
+    hypothesis_import = hypothesis_commands.add_parser("import", help="append a hypothesis JSON object")
+    hypothesis_import.add_argument("run_directory", type=Path)
+    hypothesis_import.add_argument("path", type=Path)
+    hypothesis_list = hypothesis_commands.add_parser("list", help="list hypotheses from the ledger")
+    hypothesis_list.add_argument("run_directory", type=Path)
+
+    evidence = commands.add_parser("evidence", help="append typed evidence to a run ledger")
+    evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    evidence_import = evidence_commands.add_parser("import")
+    evidence_import.add_argument("run_directory", type=Path)
+    evidence_import.add_argument("path", type=Path)
+
+    finding = commands.add_parser("finding", help="validate and confirm an evidence-gated finding")
+    finding_commands = finding.add_subparsers(dest="finding_command", required=True)
+    finding_confirm = finding_commands.add_parser("confirm")
+    finding_confirm.add_argument("run_directory", type=Path)
+    finding_confirm.add_argument("path", type=Path)
+
+    ledger = commands.add_parser("ledger", help="verify an evidence ledger")
+    ledger_commands = ledger.add_subparsers(dest="ledger_command", required=True)
+    ledger_verify = ledger_commands.add_parser("verify")
+    ledger_verify.add_argument("path", type=Path)
+
+    spec = commands.add_parser("spec", help="differential specification workflows")
+    spec_commands = spec.add_subparsers(dest="spec_command", required=True)
+    spec_compare = spec_commands.add_parser("compare", help="compare existing independent implementations")
+    spec_compare.add_argument("manifest", type=Path)
+    spec_compare.add_argument("--policy", type=Path)
+    spec_compare.add_argument(
+        "--execution-mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default=ExecutionMode.DENY.value,
+    )
+    spec_compare.add_argument("--output", type=Path, default=Path("differential-report.json"))
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "doctor":
+            report = doctor_report()
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                for tool in report["tools"]:
+                    marker = "yes" if tool["available"] else "no"
+                    detail = f" ({tool['version']})" if tool["version"] else ""
+                    print(f"{tool['name']}: {marker}{detail}")
+            return 0
+        if args.command == "audit":
+            result = audit(args.target, args.output)
+            print(result.run_directory)
+            print(f"confirmed findings: 0; analyst hypotheses: {len(result.hypotheses)}")
+            return 0
+        if args.command == "hypothesis":
+            board = HypothesisBoard(args.run_directory)
+            if args.hypothesis_command == "import":
+                imported = board.import_hypothesis(args.path)
+                print(imported.hypothesis_id)
+            else:
+                print(json.dumps(board.list_hypotheses(), indent=2, sort_keys=True))
+            return 0
+        if args.command == "evidence":
+            imported = HypothesisBoard(args.run_directory).import_evidence(args.path)
+            print(imported.evidence_id)
+            return 0
+        if args.command == "finding":
+            confirmed = HypothesisBoard(args.run_directory).confirm_finding(args.path)
+            print(confirmed.finding_id)
+            return 0
+        if args.command == "ledger":
+            count = EvidenceLedger(args.path).verify()
+            print(f"ledger valid: {count} records")
+            return 0
+        if args.command == "spec":
+            policy = ExecutionPolicy.load(args.policy)
+            runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
+            report = compare(DifferentialManifest.load(args.manifest), runner)
+            atomic_write_json(args.output.resolve(), report)
+            print(args.output.resolve())
+            print(
+                f"cases: {report.case_count}; mismatches: {len(report.mismatches)}; "
+                f"blocked executions: {report.blocked_executions}"
+            )
+            return 0
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

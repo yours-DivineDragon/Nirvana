@@ -1,0 +1,14 @@
+{
+  "evidence_id": "E-REPLACE-ME",
+  "hypothesis_id": "H-REPLACE-ME",
+  "level": "localised",
+  "kind": "static_slice",
+  "summary": "State exactly what the artifact establishes and what it does not",
+  "source": "tool-or-analyst",
+  "artifact_path": null,
+  "artifact_sha256": null,
+  "command": [],
+  "tool_version": null,
+  "assumptions": [],
+  "metadata": {}
+}

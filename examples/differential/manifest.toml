@@ -1,0 +1,13 @@
+spec = "SPEC.md"
+corpus = "cases.jsonl"
+normalizer = "json"
+
+[[implementations]]
+name = "floor"
+command = ["python3", "floor.py"]
+cwd = "."
+
+[[implementations]]
+name = "nearest"
+command = ["python3", "nearest.py"]
+cwd = "."

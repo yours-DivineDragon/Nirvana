@@ -1,0 +1,23 @@
+{
+  "hypothesis_id": "H-REPLACE-ME",
+  "security_property": "State the property that should always hold",
+  "suspected_violation": "State the exact suspected contradiction",
+  "affected_assets": [],
+  "required_attacker_capabilities": [],
+  "assumptions": [],
+  "candidate_locations": [
+    {"path": "src/Contract.sol", "line_start": 1, "line_end": 1, "symbol": null}
+  ],
+  "verification_plan": ["Run the cheapest experiment that can reject or support the hypothesis"],
+  "threat_lens": "accounting",
+  "generator": "agent:semantic",
+  "graph_slice": [],
+  "supporting_evidence": [],
+  "contradicting_evidence": [],
+  "unresolved_assumptions": [],
+  "coverage_achieved": [],
+  "proposed_next_experiment": "Describe the next evaluator",
+  "cost": {},
+  "evidence_level": "hypothesis",
+  "status": "proposed"
+}
