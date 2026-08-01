@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import base64
 import json
 import random
 import tomllib
@@ -12,6 +13,10 @@ from .contracts import validate_contract
 from .models import DifferentialMismatch, DifferentialOutcome
 from .policy import CommandRunner
 from .util import canonical_json, jsonable, sha256_bytes, sha256_file, utc_now
+from .verification import policy_sha256
+
+
+MAX_TRANSCRIPT_BYTES = 65_536
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,7 @@ class Implementation:
 
 @dataclass(frozen=True, slots=True)
 class DifferentialManifest:
+    manifest: Path
     root: Path
     spec: Path
     corpus: Path
@@ -143,6 +149,7 @@ class DifferentialManifest:
         if fuzz_cases < 0 or fuzz_cases > 10_000:
             raise ValueError("analysis fuzz_cases must be between 0 and 10000")
         return cls(
+            manifest=manifest_path,
             root=root,
             spec=_within(root, root / raw["spec"]),
             corpus=_within(root, root / raw["corpus"]),
@@ -160,6 +167,11 @@ class DifferentialReport:
     created_at: str
     spec_sha256: str
     corpus_sha256: str
+    manifest_sha256: str
+    spec_path: str
+    corpus_path: str
+    normalizer: str
+    runner: dict[str, Any]
     implementations: list[dict[str, Any]]
     corpus_case_count: int
     requested_fuzz_case_count: int
@@ -170,6 +182,7 @@ class DifferentialReport:
     mismatches: list[DifferentialMismatch]
     blocked_executions: int
     flaky_executions: int
+    truncated_transcripts: int
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -192,6 +205,7 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
     mismatches: list[DifferentialMismatch] = []
     blocked = 0
     flaky = 0
+    truncated = 0
     for case in cases:
         case_id = str(case["id"])
         input_bytes = (canonical_json(case["input"]) + "\n").encode()
@@ -220,6 +234,12 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                 flaky += 1
                 case_is_flaky = True
             representative = results[0]
+            transcript_truncated = (
+                len(representative.stdout) > MAX_TRANSCRIPT_BYTES
+                or len(representative.stderr) > MAX_TRANSCRIPT_BYTES
+            )
+            if transcript_truncated:
+                truncated += 1
             return_code, normalized, error = observations[0]
             implementation_signatures.add((return_code, normalized, error))
             outcomes.append(
@@ -230,6 +250,9 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                     stdout_sha256=sha256_bytes(representative.stdout),
                     stderr_sha256=sha256_bytes(representative.stderr),
                     duration_ms=representative.duration_ms,
+                    stdout_base64=base64.b64encode(representative.stdout[:MAX_TRANSCRIPT_BYTES]).decode("ascii"),
+                    stderr_base64=base64.b64encode(representative.stderr[:MAX_TRANSCRIPT_BYTES]).decode("ascii"),
+                    transcript_truncated=transcript_truncated,
                     run_count=manifest.repetitions,
                     flaky=outcome_is_flaky,
                     observed_signatures=sorted(
@@ -248,14 +271,35 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                     case_id=case_id,
                     input_sha256=sha256_bytes(input_bytes),
                     outcomes=outcomes,
+                    input=copy.deepcopy(case["input"]),
                     notes=notes,
                 )
             )
+    if truncated:
+        warnings.append(
+            f"{truncated} implementation transcripts were truncated to {MAX_TRANSCRIPT_BYTES} bytes; full-stream hashes remain recorded"
+        )
     return DifferentialReport(
-        schema_version="1.2.0",
+        schema_version="2.0.0",
         created_at=utc_now(),
         spec_sha256=sha256_file(manifest.spec),
         corpus_sha256=sha256_file(manifest.corpus),
+        manifest_sha256=sha256_file(manifest.manifest),
+        spec_path=manifest.spec.relative_to(manifest.root).as_posix(),
+        corpus_path=manifest.corpus.relative_to(manifest.root).as_posix(),
+        normalizer=manifest.normalizer,
+        runner={
+            "mode": runner.mode.value,
+            "policy_sha256": policy_sha256(runner),
+            "docker_image": runner.policy.docker_image,
+            "network_allowed": (
+                True
+                if runner.mode.value == "host"
+                else runner.policy.allow_network
+            ),
+            "host_execution_allowed": runner.policy.allow_host_execution,
+            "host_network_risk_accepted": runner.policy.accept_host_network_risk,
+        },
         implementations=[item.provenance(manifest.root) for item in manifest.implementations],
         corpus_case_count=len(corpus_cases),
         requested_fuzz_case_count=manifest.fuzz_cases,
@@ -266,8 +310,163 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
         mismatches=mismatches,
         blocked_executions=blocked,
         flaky_executions=flaky,
+        truncated_transcripts=truncated,
         warnings=warnings,
     )
+
+
+def minimize_mismatch(
+    manifest: DifferentialManifest,
+    runner: CommandRunner,
+    case_id: str,
+    max_steps: int = 128,
+) -> dict[str, Any]:
+    if max_steps < 1 or max_steps > 10_000:
+        raise ValueError("minimization max_steps must be between 1 and 10000")
+    corpus_cases = _load_cases(manifest.corpus)
+    cases = corpus_cases + _fuzz_cases(
+        corpus_cases, manifest.fuzz_cases, manifest.fuzz_seed
+    )
+    matches = [item for item in cases if str(item["id"]) == case_id]
+    if len(matches) != 1:
+        raise ValueError(f"differential case is not uniquely available: {case_id}")
+    original = copy.deepcopy(matches[0]["input"])
+    original_outcomes, original_mismatch, original_flaky = _execute_input(
+        manifest, runner, original
+    )
+    if not original_mismatch or original_flaky:
+        raise ValueError("case is not a stable differential mismatch")
+    current = copy.deepcopy(original)
+    current_outcomes = original_outcomes
+    attempts = 0
+    accepted = 0
+    changed = True
+    while changed and attempts < max_steps:
+        changed = False
+        for candidate in _reduction_candidates(current):
+            if attempts >= max_steps:
+                break
+            attempts += 1
+            if _json_complexity(candidate) >= _json_complexity(current):
+                continue
+            outcomes, mismatch, flaky = _execute_input(manifest, runner, candidate)
+            if mismatch and not flaky:
+                current = candidate
+                current_outcomes = outcomes
+                accepted += 1
+                changed = True
+                break
+    original_bytes = (canonical_json(original) + "\n").encode()
+    minimized_bytes = (canonical_json(current) + "\n").encode()
+    return {
+        "schema_version": "1.0.0",
+        "created_at": utc_now(),
+        "case_id": case_id,
+        "manifest_sha256": sha256_file(manifest.manifest),
+        "spec_sha256": sha256_file(manifest.spec),
+        "original_input": original,
+        "original_input_sha256": sha256_bytes(original_bytes),
+        "minimized_input": current,
+        "minimized_input_sha256": sha256_bytes(minimized_bytes),
+        "attempted_reductions": attempts,
+        "accepted_reductions": accepted,
+        "outcomes": [item.to_dict() if hasattr(item, "to_dict") else jsonable(item) for item in current_outcomes],
+    }
+
+
+def _execute_input(
+    manifest: DifferentialManifest,
+    runner: CommandRunner,
+    value: Any,
+) -> tuple[list[DifferentialOutcome], bool, bool]:
+    input_bytes = (canonical_json(value) + "\n").encode()
+    outcomes: list[DifferentialOutcome] = []
+    signatures: set[tuple[int | None, str | None, str | None]] = set()
+    any_flaky = False
+    for implementation in manifest.implementations:
+        results = [
+            runner.run(implementation.command, implementation.cwd, input_bytes)
+            for _ in range(manifest.repetitions)
+        ]
+        observations: list[tuple[int | None, str | None, str | None]] = []
+        for result in results:
+            normalized, error = _normalize(result.stdout, manifest.normalizer)
+            error = result.blocked_reason or ("execution timed out" if result.timed_out else error)
+            observations.append((result.return_code, normalized, error))
+        unique = set(observations)
+        flaky = len(unique) > 1
+        any_flaky = any_flaky or flaky
+        representative = results[0]
+        transcript_truncated = (
+            len(representative.stdout) > MAX_TRANSCRIPT_BYTES
+            or len(representative.stderr) > MAX_TRANSCRIPT_BYTES
+        )
+        return_code, normalized, error = observations[0]
+        signatures.add((return_code, normalized, error))
+        outcomes.append(
+            DifferentialOutcome(
+                implementation=implementation.name,
+                return_code=return_code,
+                normalized_output=normalized,
+                stdout_sha256=sha256_bytes(representative.stdout),
+                stderr_sha256=sha256_bytes(representative.stderr),
+                duration_ms=representative.duration_ms,
+                stdout_base64=base64.b64encode(representative.stdout[:MAX_TRANSCRIPT_BYTES]).decode("ascii"),
+                stderr_base64=base64.b64encode(representative.stderr[:MAX_TRANSCRIPT_BYTES]).decode("ascii"),
+                transcript_truncated=transcript_truncated,
+                run_count=manifest.repetitions,
+                flaky=flaky,
+                observed_signatures=sorted(
+                    sha256_bytes(canonical_json(item).encode()) for item in unique
+                ),
+                error="flaky implementation output" if flaky else error,
+            )
+        )
+    return outcomes, len(signatures) > 1 or any_flaky, any_flaky
+
+
+def _reduction_candidates(value: Any) -> list[Any]:
+    candidates: list[Any] = []
+    if isinstance(value, bool) or value is None:
+        return candidates
+    if isinstance(value, int):
+        candidates.extend(item for item in (0, 1, -1) if item != value)
+    elif isinstance(value, float):
+        candidates.extend(item for item in (0.0, 1.0, -1.0) if item != value)
+    elif isinstance(value, str):
+        candidates.extend(item for item in ("", value[: len(value) // 2], value[:1]) if item != value)
+    elif isinstance(value, list):
+        for index in range(len(value)):
+            candidates.append(value[:index] + value[index + 1 :])
+        for index, item in enumerate(value):
+            for reduced in _reduction_candidates(item):
+                candidate = copy.deepcopy(value)
+                candidate[index] = reduced
+                candidates.append(candidate)
+    elif isinstance(value, dict):
+        for key in sorted(value, key=str):
+            candidate = copy.deepcopy(value)
+            del candidate[key]
+            candidates.append(candidate)
+        for key in sorted(value, key=str):
+            for reduced in _reduction_candidates(value[key]):
+                candidate = copy.deepcopy(value)
+                candidate[key] = reduced
+                candidates.append(candidate)
+    unique: dict[str, Any] = {}
+    for candidate in candidates:
+        unique.setdefault(canonical_json(candidate), candidate)
+    return list(unique.values())
+
+
+def _json_complexity(value: Any) -> tuple[int, int]:
+    encoded = canonical_json(value)
+    nodes = 1
+    if isinstance(value, list):
+        nodes += sum(_json_complexity(item)[1] for item in value)
+    elif isinstance(value, dict):
+        nodes += sum(_json_complexity(item)[1] for item in value.values())
+    return len(encoded), nodes
 
 
 def _load_cases(path: Path) -> list[dict[str, Any]]:

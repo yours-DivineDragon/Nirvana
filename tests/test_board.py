@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from nirvana.board import HypothesisBoard
 from nirvana.ledger import EvidenceLedger
+from nirvana.learning import review_detector_candidate
 from nirvana.models import EvidenceLevel
 from nirvana.policy import CommandResult, CommandRunner, ExecutionMode, ExecutionPolicy
 from nirvana.util import atomic_write_json as real_atomic_write_json
@@ -58,7 +59,7 @@ class BoardTests(unittest.TestCase):
             "replay_mode": replay_mode,
             "tool_version": "fixture-1",
         }
-        if evidence_level == "executable":
+        if evidence_level in {"executable", "exploit_demonstrated", "formally_established"}:
             request["control_invariants"] = [
                 {
                     "assertion_id": "A-VERIFIER-HEALTHY",
@@ -92,8 +93,9 @@ class BoardTests(unittest.TestCase):
                 )
             )
             board = HypothesisBoard(result.run_directory)
+            before = EvidenceLedger(result.run_directory / "evidence.jsonl").verify()
             board.import_evidence(evidence_path)
-            self.assertEqual(EvidenceLedger(result.run_directory / "evidence.jsonl").verify(), 5)
+            self.assertEqual(EvidenceLedger(result.run_directory / "evidence.jsonl").verify(), before + 1)
 
             finding_path = root / "finding.json"
             finding_path.write_text(
@@ -112,6 +114,7 @@ class BoardTests(unittest.TestCase):
                         "causal_path": ["input", "effect"],
                         "reproducer": "test",
                         "impact": "impact",
+                        "severity_rationale": "severity rationale",
                         "reproduction_instructions": ["run test"],
                         "remediation": "fix",
                         "regression_test": "test fix",
@@ -160,6 +163,7 @@ class BoardTests(unittest.TestCase):
                         "causal_path": ["input", "effect"],
                         "reproducer": "test",
                         "impact": "impact",
+                        "severity_rationale": "severity rationale",
                         "reproduction_instructions": ["run test"],
                         "remediation": "fix",
                         "regression_test": "test fix",
@@ -233,7 +237,7 @@ class BoardTests(unittest.TestCase):
                 self.assertEqual(evidence.source, "nirvana:command-runner")
                 self.assertTrue(evidence.metadata["runner_minted"])
                 receipt = json.loads(Path(evidence.artifact_path).read_text())
-                self.assertEqual(receipt["schema_version"], "1.4.0")
+                self.assertEqual(receipt["schema_version"], "1.5.0")
                 self.assertEqual(
                     receipt["runner"]["adapter_contract"], "pytest@1"
                 )
@@ -265,14 +269,16 @@ class BoardTests(unittest.TestCase):
                             "locations": [{"path": "src/Vault.sol", "line_start": 13}],
                             "attacker_prerequisites": ["intermediary contract"],
                             "assumptions": ["fixture semantics"],
-                            "causal_path": ["intermediary", "tx.origin", "authority branch"],
+                            "causal_path": hypothesis.graph_slice[:1],
                             "reproducer": str(evidence.artifact_path),
                             "impact": "Unauthorized behavior in the fixture",
+                            "severity_rationale": "The demonstrated unauthorized behavior justifies the selected severity",
                             "reproduction_instructions": ["run the fixture verifier"],
                             "remediation": "Bind authorization to the intended caller",
                             "regression_test": "Reject the intermediary caller",
                             "supporting_evidence": ["E-POC"],
                             "reproducer_evidence_id": "E-POC",
+                            "regression_evidence_id": "E-POC",
                         }
                     )
                 )
@@ -286,7 +292,188 @@ class BoardTests(unittest.TestCase):
             report = json.loads((result.run_directory / "report.json").read_text())
             self.assertEqual([item["finding_id"] for item in report["confirmed_findings"]], ["F-POC"])
             self.assertEqual(report["evidence_ceiling"], "executable")
-            self.assertEqual(EvidenceLedger(result.run_directory / "evidence.jsonl").verify(), 8)
+            events = [
+                item["payload"]["event"]
+                for item in EvidenceLedger(result.run_directory / "evidence.jsonl").records()
+            ]
+            self.assertIn("finding_confirmed", events)
+            self.assertIn("learning_bundle_created", events)
+            self.assertTrue((result.run_directory / "learning" / "F-POC.json").is_file())
+            review_path = root / "detector-review.json"
+            review_path.write_text(
+                json.dumps(
+                    {
+                        "finding_id": "F-POC",
+                        "reviewer": "fixture-reviewer",
+                        "positive_regression": True,
+                        "negative_benign_cases": True,
+                        "cross_project_generalisation": True,
+                        "performance_noise_budget": True,
+                        "human_review": True,
+                        "provenance_licence": True,
+                        "evidence_artifacts": [
+                            {
+                                "path": str(evidence.artifact_path),
+                                "sha256": evidence.artifact_sha256,
+                            }
+                        ],
+                        "notes": ["all promotion gates were independently reviewed"],
+                    }
+                )
+            )
+            outcome = review_detector_candidate(result.run_directory, review_path)
+            self.assertEqual(outcome["status"], "promoted")
+            self.assertIn(
+                "detector_promoted",
+                [
+                    item["payload"]["event"]
+                    for item in EvidenceLedger(
+                        result.run_directory / "evidence.jsonl"
+                    ).records()
+                ],
+            )
+
+    def test_upper_evidence_tiers_raise_the_ceiling_and_confirm(self) -> None:
+        cases = (
+            {
+                "level": "exploit_demonstrated",
+                "adapter": "pytest",
+                "command": ["pytest", "-q"],
+                "assertion_id": "A-IMPACT",
+                "pointer": "/authority_gained",
+                "target_code": 0,
+                "control_code": 1,
+                "target_stderr": b"",
+                "control_stderr": b"",
+                "claim_key": "impact",
+                "claim": {
+                    "effect": "authority_gain",
+                    "asset": "gateway administration",
+                    "description": "an unprivileged caller gained administrator authority",
+                    "assertion_ids": ["A-IMPACT"],
+                },
+            },
+            {
+                "level": "formally_established",
+                "adapter": "halmos",
+                "command": ["halmos"],
+                "assertion_id": "A-PROOF",
+                "pointer": "/counterexample_verified",
+                "target_code": 1,
+                "control_code": 0,
+                "target_stderr": b"Symbolic test result: 0 passed; 1 failed;\n",
+                "control_stderr": b"Symbolic test result: 1 passed; 0 failed;\n",
+                "claim_key": "formal",
+                "claim": {
+                    "property": "no unauthorized authority transition exists in the bounded state space",
+                    "assumptions": ["bounded calldata and transaction depth"],
+                    "completeness_scope": "all paths up to eight transactions",
+                    "assertion_ids": ["A-PROOF"],
+                },
+            },
+        )
+        for case in cases:
+            with self.subTest(level=case["level"]), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                result = audit(FIXTURE, root / "runs")
+                hypothesis = result.hypotheses[0]
+                request = self.execution_request(
+                    hypothesis,
+                    f"E-{case['level'].upper()}",
+                    case["command"],
+                    "unused",
+                    expected_return_code=case["target_code"],
+                    evidence_level=case["level"],
+                    adapter=case["adapter"],
+                    control_expected_return_code=case["control_code"],
+                )
+                request["assertions"] = [
+                    {
+                        "assertion_id": case["assertion_id"],
+                        "source": "stdout",
+                        "operator": "json_pointer_equals",
+                        "pointer": case["pointer"],
+                        "value": True,
+                    }
+                ]
+                request["control_invariants"] = [
+                    {
+                        "assertion_id": "A-HEALTH",
+                        "source": "stdout",
+                        "operator": "json_pointer_equals",
+                        "pointer": "/healthy",
+                        "value": True,
+                    }
+                ]
+                request[case["claim_key"]] = case["claim"]
+                request_path = root / "request.json"
+                request_path.write_text(json.dumps(request))
+
+                target = CommandResult(
+                    case["command"],
+                    case["target_code"],
+                    json.dumps(
+                        {
+                            case["pointer"].removeprefix("/"): True,
+                            "healthy": True,
+                        }
+                    ).encode(),
+                    case["target_stderr"],
+                    2,
+                )
+                control = CommandResult(
+                    case["command"],
+                    case["control_code"],
+                    json.dumps(
+                        {
+                            case["pointer"].removeprefix("/"): False,
+                            "healthy": True,
+                        }
+                    ).encode(),
+                    case["control_stderr"],
+                    2,
+                )
+                runner = CommandRunner(
+                    ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                    ExecutionMode.DOCKER,
+                )
+                board = HypothesisBoard(result.run_directory)
+                with patch.object(
+                    runner, "run", side_effect=[target, control, target, control]
+                ):
+                    evidence = board.execute_evidence(request_path, runner)
+                    board.verify_evidence(evidence.evidence_id, runner)
+
+                scope = json.loads((result.run_directory / "scope.json").read_text())
+                self.assertEqual(scope["evidence_ceiling"], case["level"])
+                finding_path = root / "finding.json"
+                finding_path.write_text(
+                    json.dumps(
+                        {
+                            "finding_id": f"F-{case['level'].upper()}",
+                            "hypothesis_id": hypothesis.hypothesis_id,
+                            "title": f"Verified {case['level']} fixture",
+                            "severity": "critical",
+                            "evidence_level": case["level"],
+                            "security_property": hypothesis.security_property,
+                            "root_cause": "The fixture permits the declared unauthorized transition",
+                            "locations": [{"path": "src/Vault.sol", "line_start": 13}],
+                            "attacker_prerequisites": ["unprivileged caller"],
+                            "assumptions": ["fixture semantics"],
+                            "causal_path": hypothesis.graph_slice[:1],
+                            "reproducer": str(evidence.artifact_path),
+                            "impact": "Unauthorized administrative authority",
+                            "severity_rationale": "The verified authority gain justifies critical severity in this fixture",
+                            "reproduction_instructions": ["replay the bound verifier"],
+                            "remediation": "Enforce the intended authority check",
+                            "regression_test": "Reject the unauthorized transition",
+                            "supporting_evidence": [evidence.evidence_id],
+                            "reproducer_evidence_id": evidence.evidence_id,
+                            "regression_evidence_id": evidence.evidence_id,
+                        }
+                    )
+                )
+                board.confirm_finding(finding_path)
 
     def test_replay_mismatch_does_not_raise_the_ceiling(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -683,7 +870,9 @@ class BoardTests(unittest.TestCase):
                 )
             )
             runner = CommandRunner(
-                ExecutionPolicy(allow_host_execution=True, allow_network=True),
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
                 ExecutionMode.HOST,
             )
             with patch.object(runner, "run") as run:
@@ -761,6 +950,7 @@ class BoardTests(unittest.TestCase):
                         "causal_path": ["scope file", "confirmation gate"],
                         "reproducer": "scope.json",
                         "impact": "An unsupported ceiling would bypass degradation",
+                        "severity_rationale": "The impact is bounded by the unsupported ceiling",
                         "reproduction_instructions": ["edit scope.json"],
                         "remediation": "Derive mutable scope state from the ledger",
                         "regression_test": "Reject the edited scope",
@@ -887,11 +1077,13 @@ class BoardTests(unittest.TestCase):
                         "causal_path": ["input", "effect"],
                         "reproducer": "wrong receipt",
                         "impact": "Unsupported impact",
+                        "severity_rationale": "The selected severity is unsupported",
                         "reproduction_instructions": ["replay E-BOUND"],
                         "remediation": "Use relevant evidence",
                         "regression_test": "Bind evidence to the hypothesis",
                         "supporting_evidence": ["E-BOUND"],
                         "reproducer_evidence_id": "E-BOUND",
+                        "regression_evidence_id": "E-BOUND",
                     }
                 )
             )
@@ -959,11 +1151,13 @@ class BoardTests(unittest.TestCase):
                         "causal_path": ["input", "effect"],
                         "reproducer": "E-FLAKY",
                         "impact": "Unsupported",
+                        "severity_rationale": "The selected severity is unsupported",
                         "reproduction_instructions": ["replay E-FLAKY"],
                         "remediation": "Stabilize the proof",
                         "regression_test": "Require the latest replay to pass",
                         "supporting_evidence": ["E-FLAKY"],
                         "reproducer_evidence_id": "E-FLAKY",
+                        "regression_evidence_id": "E-FLAKY",
                     }
                 )
             )
@@ -994,7 +1188,9 @@ class BoardTests(unittest.TestCase):
                 ),
             ]
             runner = CommandRunner(
-                ExecutionPolicy(allow_host_execution=True, allow_network=True),
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
                 ExecutionMode.HOST,
             )
             board = HypothesisBoard(result.run_directory)
@@ -1026,9 +1222,10 @@ class BoardTests(unittest.TestCase):
                         "locations": [{"path": "src/Vault.sol", "line_start": 13}],
                         "attacker_prerequisites": ["caller"],
                         "assumptions": ["static analyzer models"],
-                        "causal_path": ["input", "authority check", "effect"],
+                        "causal_path": hypothesis.graph_slice[:1],
                         "reproducer": "structural analyzer receipts",
                         "impact": "A medium-impact unsafe path requires review",
+                        "severity_rationale": "The impact is material but does not meet high-severity conditions",
                         "reproduction_instructions": ["replay both analyzer receipts"],
                         "remediation": "Enforce the intended property",
                         "regression_test": "Keep both analyzers clean",

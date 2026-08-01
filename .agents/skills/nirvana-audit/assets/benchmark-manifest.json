@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0.0",
+  "benchmark_id": "REPLACE-WITH-BLIND-BENCHMARK-ID",
+  "cutoff": "2025-01-01T00:00:00Z",
+  "track": "web3_hidden_variants",
+  "blind": false,
+  "corpora": [
+    {
+      "corpus_id": "rules-at-cutoff",
+      "role": "detector_rules",
+      "published_at": "2024-12-31T00:00:00Z",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "CASE-REPLACE-ME",
+      "repository": "REPLACE-WITH-REPOSITORY",
+      "last_vulnerable_commit": "REPLACE-WITH-PINNED-COMMIT",
+      "originated_at": "2025-02-01T00:00:00Z",
+      "disclosed_at": "2025-03-01T00:00:00Z",
+      "eligible": true,
+      "hidden_variant": true,
+      "transformation_log_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kloc": 1.0,
+      "ground_truth": [
+        {"vulnerability_id": "VULN-REPLACE-ME", "severity": "high"}
+      ],
+      "ground_truth_material_blocked": true,
+      "eventual_fix_accessed": false
+    }
+  ],
+  "release_evidence": {
+    "reproducible_builds": false,
+    "ssg_dialects": [],
+    "deterministic_baseline": false,
+    "typed_hypotheses": false,
+    "executable_evidence_ledger": false,
+    "dynamic_verifiers_per_ecosystem": {},
+    "deterministic_baseline_recall": null,
+    "auditable_cost_controls": false,
+    "adapter_conformance": [],
+    "evidence_artifacts": []
+  },
+  "trials": [
+    {
+      "trial_id": "TRIAL-REPLACE-ME",
+      "case_id": "CASE-REPLACE-ME",
+      "run_id": "REPLACE-WITH-NIRVANA-RUN-ID",
+      "seed": 1,
+      "started_at": "2025-02-15T00:00:00Z",
+      "ended_at": "2025-02-15T01:00:00Z",
+      "model": "REPLACE-WITH-EXACT-MODEL",
+      "prompt_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "tools": ["nirvana-0.4.0"],
+      "token_budget": 100000,
+      "compute_hours": 1.0,
+      "model_cost": 1.0,
+      "transcript_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "environment_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "findings": [
+        {
+          "finding_id": "F-REPLACE-ME",
+          "verdict": "true_positive",
+          "severity": "high",
+          "evidence_level": "executable",
+          "confidence": 0.9,
+          "ground_truth_id": "VULN-REPLACE-ME",
+          "reproduced": true,
+          "duplicate": false,
+          "novel": false,
+          "time_to_finding_seconds": 1800,
+          "patch_tests_passed": true
+        }
+      ],
+      "coverage": {
+        "assets": 1.0,
+        "authority_paths": 1.0,
+        "state_transitions": 1.0,
+        "trust_boundaries": 1.0
+      },
+      "reached_ids": ["VULN-REPLACE-ME"],
+      "triggered_ids": ["VULN-REPLACE-ME"],
+      "detected_ids": ["VULN-REPLACE-ME"]
+    }
+  ]
+}

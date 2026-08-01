@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/critic-decision.schema.json",
+  "title": "Nirvana adversarial critic decision",
+  "type": "object",
+  "required": ["hypothesis_id", "critic", "decision", "reasons", "assumptions_examined", "evidence_ids", "next_experiment"],
+  "properties": {
+    "hypothesis_id": {"type": "string", "pattern": "^H-[A-Za-z0-9._-]+$"},
+    "critic": {"enum": ["devils_advocate", "rescue"]},
+    "decision": {"enum": ["sustain", "reject", "uphold_rejection", "rescue"]},
+    "reasons": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "assumptions_examined": {"type": "array", "items": {"type": "string"}},
+    "evidence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"}},
+    "next_experiment": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

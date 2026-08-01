@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/semantic-graph.schema.json",
+  "title": "Nirvana Security Semantic Graph",
+  "type": "object",
+  "required": ["schema_version", "created_at", "target_snapshot_sha256", "nodes", "edges", "support", "warnings"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["node_id", "kind", "label", "dialect", "location", "properties"],
+        "properties": {
+          "node_id": {"type": "string", "pattern": "^N-[A-Za-z0-9._-]+$"},
+          "kind": {"enum": ["module", "symbol", "entry_point", "state", "asset", "authority", "effect", "trust_boundary", "invariant", "upgrade", "external_dependency"]},
+          "label": {"type": "string", "minLength": 1},
+          "dialect": {"type": "string", "minLength": 1},
+          "location": {"type": ["object", "null"]},
+          "properties": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "kind", "properties"],
+        "properties": {
+          "source": {"type": "string", "pattern": "^N-[A-Za-z0-9._-]+$"},
+          "target": {"type": "string", "pattern": "^N-[A-Za-z0-9._-]+$"},
+          "kind": {"enum": ["contains", "calls", "reads", "writes", "transfers", "guards", "administers", "upgrades", "crosses", "depends_on", "constrains", "reaches"]},
+          "properties": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "support": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dialect", "maturity", "frontends", "runtime_adapters", "concepts", "limitations"],
+        "properties": {
+          "dialect": {"type": "string", "minLength": 1},
+          "maturity": {"enum": ["syntax_only", "typed", "data_flow_capable", "executable", "domain_complete"]},
+          "frontends": {"type": "array", "items": {"type": "string"}},
+          "runtime_adapters": {"type": "array", "items": {"type": "string"}},
+          "concepts": {"type": "array", "items": {"type": "string"}},
+          "limitations": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

@@ -1,30 +1,29 @@
 # Nirvana
 
-Nirvana is a local, evidence-gated security research system for authorized bug-bounty and audit work. It is designed to run with **Codex**, **Claude Code**, or **Kimi Code** through one shared Agent Skill. It does not call model APIs, require provider API keys, or route prompts to hosted model SDKs.
-
-The governing principle is simple:
+Nirvana is a local, evidence-gated security research system for authorized bug-bounty and audit work. It runs with **Codex**, **Claude Code**, or **Kimi Code** through one shared Agent Skill. It does not call model APIs, require provider API keys, or route prompts through hosted model SDKs.
 
 > Models propose semantic hypotheses. Deterministic analysis locates and constrains them. Tests, fuzzers, symbolic engines, or formal tools prove or reject them.
 
 ## Current status
 
-This repository is an evolving research foundation, not a finished universal auditor. Version `0.3.1` provides:
+Version `0.4.0` implements the complete orchestration skeleton described by the two founding PDFs:
 
-- non-executing hostile-repository intake with commit, file, and snapshot provenance;
-- explicit capability degradation when builds or verifier tools are unavailable;
-- a typed hypothesis, evidence, finding, and differential-mismatch model;
-- a tamper-evident, append-only evidence ledger;
-- assertion-checked execution receipts, replay, evidence-to-finding binding, and ledger-derived ceilings;
-- structural corroboration from two independently executed and replay-verified analyzers;
-- health-checked patched-target negative controls and hash-bound auditor harness overlays for executable evidence;
-- stream-hashed snapshots that remain complete for large files and run manifests above 1 MB;
-- a non-root, network-off Docker runner with a read-only target and disposable writable compiler/test paths;
-- comment-aware EVM leads plus an optional solc standard-JSON AST frontend;
-- differential provenance, repeated-run flake detection, and seeded JSON corpus mutation;
-- dependency-free runtime validation against the versioned JSON contracts;
-- a shared audit skill for Codex, Claude Code, and Kimi Code.
+- hostile-repository intake with commit, dependency, submodule, artifact, toolchain, privilege, upgrade, external-dependency, and snapshot provenance;
+- opt-in, digest-pinned Docker build/test baselines with hash-bound generated ABI, IDL, bytecode, and build artifacts;
+- a versioned Security Semantic Graph (SSG) for modules, entry points, state, assets, authority, effects, invariants, upgrades, dependencies, and trust boundaries;
+- an explicit support-maturity record per detected dialect, from `syntax_only` through `domain_complete`;
+- a ledger-backed business-flow × threat-lens coverage scheduler;
+- deterministic, AST, graph-query, attacker-sequence, specification-inference, historical-variant, test-gap, retrieval-analogy, and differential candidate generators;
+- typed hypotheses, Devil's Advocate and Rescue Critic decisions, rejection archives, causal deduplication, and post-validation novelty assessment;
+- all six evidence levels: `hypothesis`, `localised`, `structurally_confirmed`, `executable`, `exploit_demonstrated`, and `formally_established`;
+- assertion-checked execution receipts, replay, patched-target negative controls, health invariants, and hash-bound auditor harness overlays;
+- finding-to-evidence, regression, causal-graph, severity-rationale, and impact bindings;
+- differential classification, deterministic seed minimization, spec/test feedback packages, audit-run integration, and private disclosure packets;
+- contamination-controlled temporal benchmark evaluation, Magma-style reached/triggered/detected accounting, the eleven source metrics, and explicit release gates;
+- regression learning bundles and gated detector-distillation reviews that never modify production rules automatically;
+- hash-chained evidence ledgers with exportable prefix checkpoints.
 
-It does **not** yet claim a complete Security Semantic Graph, business-logic discovery, exploit synthesis, Solana/Sui support, or production-grade recall.
+This is still an evolving research system. The generic frontend supplies broad **syntax-level** coverage; it does not pretend that Solana, Move/Sui, native, JVM, WASM, DLT, or Web/API targets are domain-complete. Even the EVM compiler frontend currently publishes `typed`, not complete interprocedural data flow. The generated support record and `nirvana doctor` output are the authority for what a particular run can claim.
 
 ## Install locally
 
@@ -37,9 +36,9 @@ nirvana doctor
 
 The package has no runtime dependencies outside Python 3.11+.
 
-## Run a safe first pass
+## Create a reproducible run
 
-Run Nirvana from this repository rather than changing into the untrusted target:
+Run Nirvana from this trusted repository rather than changing into an untrusted target:
 
 ```bash
 nirvana audit /absolute/path/to/authorized-target \
@@ -48,91 +47,157 @@ nirvana audit /absolute/path/to/authorized-target \
 
 The run directory contains:
 
-- `scope.json` - pinned target identity, inventory, exclusions, and capability ceiling;
-- `hypotheses.jsonl` - recall-oriented candidates, never confirmed findings;
-- `evidence.jsonl` - hash-chained event ledger;
-- `report.json` and `report.md` - current conclusions and limitations.
+- `scope.json` — pinned target identity, inventory, dependency/toolchain signals, exclusions, and evidence ceiling;
+- `semantic-graph.json` — the hash-bound SSG and truthful dialect maturity;
+- `coverage-initial.json` — immutable initial flow × threat schedule;
+- `coverage.json` — ledger-derived current coverage projection;
+- `hypotheses.jsonl` — recall-oriented candidates, never confirmed findings;
+- `evidence.jsonl` — the hash-chained event ledger;
+- `report.json` and `report.md` — current conclusions, support limits, costs, coverage, rejections, and findings.
 
-Verify ledger integrity independently:
+Verify ledger integrity and create an independently anchorable prefix checkpoint:
 
 ```bash
 nirvana ledger verify ./nirvana-runs/<run-id>/evidence.jsonl
+nirvana ledger checkpoint ./nirvana-runs/<run-id>/evidence.jsonl \
+  --output ledger-checkpoint.json
+nirvana ledger verify-checkpoint ./nirvana-runs/<run-id>/evidence.jsonl \
+  ledger-checkpoint.json
 ```
 
-Intake never launches Git from the target, so repository-local hooks and `core.fsmonitor` cannot execute. Dirty status is intentionally `null` until an isolated adapter can establish it safely. Every scoped regular file is stream-hashed, including files larger than the configured analysis limit. `max_file_bytes` limits candidate-content analysis only; add generated directories under `[intake].excluded_directories` when they are intentionally outside scope. Mutable scope state is derived from the hash-chained ledger, and a stale lower projection is recovered after an interrupted write.
+Intake never launches Git from the target, so repository-local hooks and `core.fsmonitor` cannot execute. Dirty state remains unknown unless a future isolated adapter proves it. Every scoped regular file is stream-hashed, including files above the content-analysis limit.
 
-For compiler-context candidates, generate solc standard-JSON output in an isolated environment and pass the existing artifact without executing the target during intake:
+For compiler-context EVM candidates, generate solc standard-JSON output in an isolated environment and pass the existing artifact. The AST is analysis context, not evidence:
 
 ```bash
 nirvana audit /absolute/path/to/target --solc-ast /path/to/solc-output.json \
   --output ./nirvana-runs --policy ./nirvana.toml
 ```
 
-## Mint executable evidence
+## Run the build and test baseline
 
-Executable evidence is created by execution, not imported as a claim. Fill `.agents/skills/nirvana-audit/assets/execution-request.json`, review the argv, and run it through a pinned sandbox:
+Intake records safe, argv-native build and test plans but never executes target content automatically. Copy only detected commands into a reviewed `baseline-request.json`; successful exit code `0` is mandatory. Run the baseline in a digest-pinned Docker policy:
 
 ```bash
-nirvana evidence run <run-directory> <execution-request.json> \
+nirvana baseline run <run-directory> baseline-request.json \
+  --policy nirvana.toml --execution-mode docker
+```
+
+The target stays read-only. Outputs are redirected to an auditor-owned overlay, bounded, stream-hashed, marked non-executable, and referenced by a ledger-bound receipt. Build and test status becomes `passed` or `failed` only after this step.
+
+Captured deployed bytecode must be obtained separately through an authorized process. Nirvana performs an offline comparison and never queries a chain itself:
+
+```bash
+nirvana deployment verify <run-directory> deployment-attestation.json
+```
+
+## Work the semantic coverage board
+
+`nirvana audit` derives business flows from graph entry points and creates every applicable flow × threat-lens task. Candidate generation is not counted as coverage.
+
+```bash
+nirvana coverage list <run-directory>
+nirvana coverage mark <run-directory> <task-id> --status in_progress \
+  --note "reviewing the authority transition"
+nirvana coverage mark <run-directory> <task-id> --status covered \
+  --evidence <verified-evidence-id> --reached-node <graph-node-id>
+```
+
+A covered task needs replay-verified evidence or a concrete `negative-analysis:` note describing the deterministic basis. The report tracks assets, authority paths, state/effects, trust boundaries, dynamic states, and hypotheses tested.
+
+## Adversarial review, variants, and novelty
+
+Critic decisions are typed ledger events, not chat conclusions:
+
+```bash
+nirvana hypothesis critique <run-directory> critic-decision.json
+nirvana variant mine <run-directory> known-issues.json --cutoff 2025-01-01T00:00:00Z
+nirvana finding novelty <run-directory> <finding-id> known-issues.json
+```
+
+The Devil's Advocate may sustain or reject a hypothesis. A separate Rescue Critic may uphold or revive a rejection only with cited evidence or a concrete next experiment. Historical mining produces hypotheses and records corpus provenance; retrieval never counts as evidence. Novelty is assigned only after confirmation by comparing the invariant, root cause, causal graph, prerequisites, exploit sequence, impact, code identity, fix, and lineage.
+
+## Mint evidence
+
+Imported analyst material is capped at `localised`. Stronger evidence is created by execution and successful replay:
+
+```bash
+nirvana evidence run <run-directory> execution-request.json \
   --policy nirvana.toml --execution-mode docker
 nirvana evidence verify <run-directory> <evidence-id> \
   --policy nirvana.toml --execution-mode docker
 ```
 
-An execution request must name a supported adapter, the exact hypothesis property and violation, one adapter-supported return code, and one or more bounded `contains` or `json_pointer_equals` output predicates. Executable requests also identify a separate patched copy of the target, its exact changed-file set, the expected control return code, and one or more `control_invariants` that demonstrate the verifier completed normally. At least one changed file must be a candidate location named by the hypothesis. Nirvana classifies non-zero results with adapter-specific contracts so compilation, startup, collection, and tool failures cannot masquerade as a fixed control. Control invariants should include an independent baseline success signal on both targets; merely proving that a suite started or discovered tests is too weak. Nirvana runs the identical command, exploit predicates, and health invariants against both targets: the vulnerable target must satisfy every predicate and invariant, while the patched control must keep every health invariant true but reverse at least one exploit predicate. Replay repeats and decision-binds both sets. `replay_mode: "strict"` additionally requires byte-identical output. Host execution cannot mint executable evidence.
-
-PoCs do not need to modify the audited snapshot. Put auditor-owned tests in a separate, symlink-free harness directory, inspect its digest, and reference it from the request. Docker mounts it read-only at `/harness` and records its complete hash in both receipts:
+Structural confirmation requires two distinct replay-verified solc-AST, Slither, or Semgrep adapters for the same claim. Executable and stronger evidence requires a separate patched target whose exact delta touches the candidate code, plus verifier-health invariants that pass on both targets. Put auditor-owned PoCs in a separate symlink-free directory:
 
 ```bash
 nirvana harness hash /absolute/path/to/auditor-harness
 ```
 
-Supported executable adapters are Forge test, Echidna, Medusa, Halmos, Cargo test, Pytest, and Node test. Static solc-AST, Slither, and Semgrep requests may mint structural evidence only. A command must match its declared adapter, so `echo`, an opaque `bash -c`, or `forge create` cannot unlock a finding.
+The sandbox mounts the harness read-only at `/harness`. Supported dynamic adapters are Forge test, Echidna, Medusa, Halmos, Cargo test, Pytest, and Node test. Adapter-specific outcome classifiers reject build, collection, startup, and infrastructure failures.
 
-Static-only analysis raises the intermediate ceiling only after two independent supported analyzers have been run and replay-verified through Nirvana. Create separate structural requests for solc-AST, Slither, or Semgrep, then run and verify each:
+`exploit_demonstrated` requests must bind an asset-loss, authority-gain, consensus-failure, or equivalent impact claim to structured JSON assertions. `formally_established` is restricted to Halmos and requires explicit assumptions, a completeness scope, and structured proof decisions. These tiers raise the run ceiling only after replay; they are not aliases for ordinary executable tests.
+
+Confirmed findings require exact supporting evidence IDs, SSG node-based causal paths, severity rationale, and a negative-control-backed regression receipt for executable and stronger work:
 
 ```bash
-nirvana evidence run <run-directory> <solc-request.json> \
-  --policy nirvana.toml --execution-mode docker
-nirvana evidence verify <run-directory> <solc-evidence-id> \
-  --policy nirvana.toml --execution-mode docker
-nirvana evidence run <run-directory> <slither-request.json> \
-  --policy nirvana.toml --execution-mode docker
-nirvana evidence verify <run-directory> <slither-evidence-id> \
-  --policy nirvana.toml --execution-mode docker
+nirvana finding confirm <run-directory> finding.json
 ```
 
-Imported analyst material is capped at `localised`; it can never raise a reporting ceiling. Findings must list `supporting_evidence`; executable findings must also identify a negative-control-verified `reproducer_evidence_id`. Evidence from another hypothesis or a receipt whose claim differs from the finding is rejected.
+## Differential specification workflow
 
-## Use from a coding agent
+Implementations are produced in isolated Codex, Claude Code, or Kimi Code sessions from the same pinned specification; Nirvana calls no model API. The harness records source hashes, commands, languages, producer/model/prompt provenance, versions, repeated-run flakes, deterministic fuzz inputs, raw transcript prefixes, and full-stream hashes.
 
-- Codex: invoke `$nirvana-audit` or ask it to audit an authorized target with Nirvana.
+```bash
+nirvana spec compare manifest.toml --policy nirvana.toml \
+  --execution-mode docker --output differential-report.json \
+  --run-directory <run-directory>
+nirvana spec minimize manifest.toml <case-id> --policy nirvana.toml \
+  --execution-mode docker --output minimized.json
+nirvana spec classify differential-report.json <case-id> implementation_bug \
+  --rationale "the pinned conformance case selects implementation A" \
+  --output triage.json --run-directory <run-directory>
+nirvana spec feedback triage.json minimized.json \
+  --spec-amendment "clarify the boundary rule" \
+  --regression-test "add the minimized seed" \
+  --output feedback.json --run-directory <run-directory>
+```
+
+Attached mismatches become `localised` hypotheses in the run ledger; they never self-promote to proof. A private, seven-part coordinated-disclosure packet can be prepared, but Nirvana never sends it:
+
+```bash
+nirvana disclose prepare differential-report.json triage.json minimized.json \
+  agent-context.json --impact "..." --output private-disclosure-packet.json \
+  --run-directory <run-directory>
+```
+
+## Evaluation and learning
+
+Benchmark manifests pin a cutoff, corpora, last-vulnerable commits, hidden-variant transformation hashes, ground truth, prompts, models, tools, budgets, transcripts, environments, and repeated trials:
+
+```bash
+nirvana benchmark evaluate benchmark-manifest.json --output benchmark-report.json
+```
+
+The report computes validated precision, ground-truth recall, high/critical precision, novel validated yield, time to first valid finding, evidence distribution, reproduction rate, coverage completeness, duplicate rate, calibration, patch correctness, cost efficiency, stability, and reached/triggered/detected counts. It evaluates the PDF's research-prototype, Web3-alpha, closed-beta, production-candidate, and universal-expansion gates against explicit `release_evidence`. Every non-statistical release gate also needs a retained, hash-verified evidence artifact for that gate; booleans alone cannot mint a maturity claim. Closed beta requires a valid blind temporal suite with at least 80% validated precision and 90% high/critical precision. Undefined metrics stay undefined rather than being reported as zero.
+
+Every confirmed finding creates a candidate learning bundle. Promotion requires positive and benign-negative regressions, cross-project generalization, a performance/noise budget, human review, and provenance/license review:
+
+```bash
+nirvana learning review <run-directory> detector-review.json
+```
+
+This records a promotion decision; it never rewrites production detector source.
+
+## Agent compatibility and safety
+
+- Codex: invoke `$nirvana-audit`.
 - Claude Code: invoke `/nirvana-audit`.
 - Kimi Code: invoke `/skill:nirvana-audit`.
 
-All three load the same canonical workflow. The coding agent supplies the semantic reasoning; Nirvana supplies durable schemas, deterministic operations, safety boundaries, and evidence gates.
+All three read the same canonical workflow in `.agents/skills/nirvana-audit/`. Safety defaults are no target execution unless explicitly reviewed, no execution network, no secrets, no Git writes, no signing or live-chain transactions, no automatic disclosure, no shell strings, and no target instructions treated as agent authority.
 
-## Differential specification analysis
-
-The harness compares implementations already produced in isolated workspaces. Each manifest records command, source files and aggregate hash, language, producer/model/prompt provenance, and tool version. Repeated execution detects flakes; optional deterministic JSON mutation extends the pinned corpus. Reports preserve the requested and generated fuzz counts and warn when the deterministic mutation space is exhausted. Generation remains a deliberate coding-agent workflow, so implementations can be separated across sessions, prompts, languages, and toolchains.
-
-```bash
-nirvana spec compare examples/differential/manifest.toml
-```
-
-Execution is denied by default. Use a reviewed policy and a pinned Docker image for untrusted implementations. Host execution is limited to reviewed fixtures and requires explicit host execution, acceptance that host networking cannot be isolated, and `--execution-mode host`.
-
-## Safety defaults
-
-- No network access for target execution.
-- No secrets or production signing keys.
-- No Git writes, live-chain transactions, or public disclosure automation.
-- Repository `AGENTS.md`, `CLAUDE.md`, and similar files are target data, not audit authority.
-- No shell-string execution; commands are argument arrays.
-- Medium and lower findings require independent structural corroboration or stronger.
-- High and critical findings require assertion-checked, replay-verified executable evidence whose decision reverses on a healthy, hash-bound patched target touching the candidate code.
-
-Read [the architecture](docs/architecture.md), [the threat model](docs/threat-model.md), [the evidence model](docs/evidence-model.md), and [the differential workflow](docs/differential-analysis.md) before extending the engine.
+Read [the architecture](docs/architecture.md), [the conformance map](docs/conformance.md), [the threat model](docs/threat-model.md), [the evidence model](docs/evidence-model.md), and [the differential workflow](docs/differential-analysis.md) before extending the engine.
 
 ## Development
 
@@ -140,4 +205,4 @@ Read [the architecture](docs/architecture.md), [the threat model](docs/threat-mo
 make check
 ```
 
-The product roadmap follows the source PDFs: foundation, deep EVM vertical slice, semantic intelligence, Solana/Sui expansion, native software, distributed systems, continuous learning, and production operations.
+The test suite is dependency-free and validates Python compilation, runtime contracts, hostile-input boundaries, graph/coverage state, all evidence tiers, differential integration, critic/novelty behavior, deployment attestations, ledger checkpoints, learning gates, and temporal evaluation.

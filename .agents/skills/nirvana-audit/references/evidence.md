@@ -16,16 +16,18 @@
 - A retrieved historical finding supplies a hypothesis and validation ideas, never proof for this target.
 - Code reachability without the trigger is not a detected vulnerability.
 - A crash without security impact is not automatically a security finding.
+- `exploit_demonstrated` requires a structured assertion that establishes asset loss, authority gain, consensus failure, or an equivalent effect; a passing PoC alone remains `executable`.
+- `formally_established` requires a Halmos result bound to explicit assumptions and completeness scope. Do not generalize a bounded result beyond those limits.
 - Fork evidence proves behavior at one pinned state and configuration, not every deployment.
 - Economic evidence states liquidity, capital, ordering, oracle, fee, and governance assumptions.
 - Store contradicting evidence and rejection reasons alongside supporting evidence.
 - Imported evidence records are capped at `localised`. Nirvana must run and replay every structural or executable adapter before it can affect a reporting ceiling.
 - Structural confirmation requires two distinct runner-minted and replay-verified solc-AST, Slither, or Semgrep receipts bound to the same snapshot and claim. This tier cannot support high or critical severity.
-- A process exit alone is never proof. The request must declare bounded fixed-string or JSON predicates for the specific verifier decision. Unbounded regular-expression assertions are not supported.
+- A process exit alone is never proof. The request must declare bounded fixed-string or JSON predicates for the specific verifier decision. A structured harness may emit exactly one `NIRVANA_RESULT_JSON=<json>` line amid tool output; duplicate marker lines are invalid. Unbounded regular-expression assertions are not supported.
 - Executable evidence requires a separate patched-target negative control with an exact declared file delta that touches a hypothesis candidate location. Nirvana runs the same command, exploit predicates, and health invariants against both targets; a PoC that passes against both or a control that breaks the verifier is rejected. Non-zero results must satisfy the adapter-specific outcome contract documented in `docs/evidence-model.md`; a requested exit code is not self-authenticating.
 - Include at least one independent, non-PoC baseline test in the command and require its exact success marker on both targets. Compilation, collection, or generic suite-start text alone is too weak because a crashing PoC can emit those signals before failing.
 - Auditor-owned harnesses remain outside the target, contain no symlinks, are mounted read-only, and are hash-bound into mint and replay receipts.
-- Every finding lists its supporting evidence IDs. Executable findings bind a negative-control-verified reproducer ID, and evidence from another hypothesis or claim is rejected.
+- Every finding lists its supporting evidence IDs. Executable-and-stronger findings bind negative-control-verified reproducer and regression IDs, and evidence from another hypothesis or claim is rejected. Causal paths must use ledger-bound SSG nodes and connect to the hypothesis graph slice.
 
 ## Finding gate
 

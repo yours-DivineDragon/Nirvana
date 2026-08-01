@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/disclosure-packet.schema.json",
+  "title": "Nirvana private coordinated-disclosure packet",
+  "type": "object",
+  "required": ["schema_version", "created_at", "spec_revision", "minimized_seed", "normalized_outputs", "classification", "impact_statement", "agent_configuration", "prompt_injection_assessment", "recommended_order", "handling"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "spec_revision": {"type": "object"},
+    "minimized_seed": {},
+    "normalized_outputs": {"type": "array", "minItems": 2, "items": {"type": "object"}},
+    "classification": {"type": "string"},
+    "impact_statement": {"type": "string", "minLength": 1},
+    "agent_configuration": {"type": "object"},
+    "prompt_injection_assessment": {"type": "object"},
+    "recommended_order": {"type": "array", "items": {"type": "string"}},
+    "handling": {"type": "object"}
+  },
+  "additionalProperties": false
+}

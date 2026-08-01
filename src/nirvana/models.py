@@ -240,11 +240,13 @@ class Finding:
     causal_path: list[str]
     reproducer: str
     impact: str
+    severity_rationale: str
     reproduction_instructions: list[str]
     remediation: str
     regression_test: str
     supporting_evidence: list[str]
     reproducer_evidence_id: str | None = None
+    regression_evidence_id: str | None = None
     novelty: NoveltyClass = NoveltyClass.UNCERTAIN
     related_issues: list[str] = field(default_factory=list)
 
@@ -257,6 +259,7 @@ class Finding:
             "root_cause": self.root_cause,
             "reproducer": self.reproducer,
             "impact": self.impact,
+            "severity_rationale": self.severity_rationale,
             "remediation": self.remediation,
             "regression_test": self.regression_test,
         }
@@ -275,6 +278,10 @@ class Finding:
             _validate_identifier(self.reproducer_evidence_id, "E")
             if self.reproducer_evidence_id not in self.supporting_evidence:
                 raise ValueError("finding reproducer evidence must be listed as supporting evidence")
+        if self.regression_evidence_id is not None:
+            _validate_identifier(self.regression_evidence_id, "E")
+            if self.regression_evidence_id not in self.supporting_evidence:
+                raise ValueError("finding regression evidence must be listed as supporting evidence")
 
     def validate_reporting_gate(self) -> None:
         if EVIDENCE_RANK[self.evidence_level] < EVIDENCE_RANK[EvidenceLevel.STRUCTURALLY_CONFIRMED]:
@@ -285,6 +292,8 @@ class Finding:
         if EVIDENCE_RANK[self.evidence_level] >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
             if self.reproducer_evidence_id is None:
                 raise ValueError("executable findings require a runner-minted reproducer evidence id")
+            if self.regression_evidence_id is None:
+                raise ValueError("executable findings require negative-control-backed regression evidence")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate_reporting_gate()
@@ -309,6 +318,7 @@ class Finding:
             causal_path=[str(item) for item in value["causal_path"]],
             reproducer=str(value["reproducer"]),
             impact=str(value["impact"]),
+            severity_rationale=str(value["severity_rationale"]),
             reproduction_instructions=[str(item) for item in value["reproduction_instructions"]],
             remediation=str(value["remediation"]),
             regression_test=str(value["regression_test"]),
@@ -316,6 +326,11 @@ class Finding:
             reproducer_evidence_id=(
                 str(value["reproducer_evidence_id"])
                 if value.get("reproducer_evidence_id") is not None
+                else None
+            ),
+            regression_evidence_id=(
+                str(value["regression_evidence_id"])
+                if value.get("regression_evidence_id") is not None
                 else None
             ),
             novelty=NoveltyClass(value.get("novelty", NoveltyClass.UNCERTAIN.value)),
@@ -333,6 +348,9 @@ class DifferentialOutcome:
     stdout_sha256: str
     stderr_sha256: str
     duration_ms: int
+    stdout_base64: str = ""
+    stderr_base64: str = ""
+    transcript_truncated: bool = False
     run_count: int = 1
     flaky: bool = False
     observed_signatures: list[str] = field(default_factory=list)
@@ -344,6 +362,8 @@ class DifferentialMismatch:
     case_id: str
     input_sha256: str
     outcomes: list[DifferentialOutcome]
+    input: Any = None
+    minimized_input: Any = None
     classification: MismatchClass = MismatchClass.UNCLASSIFIED
     notes: list[str] = field(default_factory=list)
 

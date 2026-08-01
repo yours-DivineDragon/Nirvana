@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/known-issue-corpus.schema.json",
+  "title": "Nirvana provenance-bearing known-issue corpus",
+  "type": "object",
+  "required": ["schema_version", "created_at", "issues"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["issue_id", "affected_version", "code_identity", "security_property", "root_cause", "root_cause_graph", "attacker_prerequisites", "exploit_sequence", "impact", "fix_strategy", "historical_lineage", "status", "provenance", "published_at"],
+        "properties": {
+          "issue_id": {"type": "string", "minLength": 1},
+          "affected_version": {"type": "string", "minLength": 1},
+          "code_identity": {"type": "string", "minLength": 1},
+          "security_property": {"type": "string", "minLength": 1},
+          "root_cause": {"type": "string", "minLength": 1},
+          "root_cause_graph": {"type": "array", "items": {"type": "string"}},
+          "attacker_prerequisites": {"type": "array", "items": {"type": "string"}},
+          "exploit_sequence": {"type": "array", "items": {"type": "string"}},
+          "impact": {"type": "string", "minLength": 1},
+          "fix_strategy": {"type": "string", "minLength": 1},
+          "historical_lineage": {"type": "array", "items": {"type": "string"}},
+          "status": {"enum": ["fixed", "unfixed", "disputed"]},
+          "provenance": {"type": "string", "minLength": 1},
+          "published_at": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

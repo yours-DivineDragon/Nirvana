@@ -5,6 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
+from .models import SupportMaturity
 from .util import jsonable
 
 
@@ -17,6 +18,13 @@ TOOLS = {
     "echidna": ["echidna", "--version"],
     "medusa": ["medusa", "version"],
     "halmos": ["halmos", "--version"],
+    "cargo": ["cargo", "--version"],
+    "pytest": ["pytest", "--version"],
+    "node": ["node", "--version"],
+    "java": ["java", "--version"],
+    "sui": ["sui", "--version"],
+    "anchor": ["anchor", "--version"],
+    "wasmtime": ["wasmtime", "--version"],
 }
 
 
@@ -55,9 +63,41 @@ def inspect_tools() -> list[ToolStatus]:
 def doctor_report() -> dict[str, Any]:
     statuses = inspect_tools()
     available = {item.name for item in statuses if item.available}
+    support = [
+        {
+            "dialect": "evm",
+            "maturity": SupportMaturity.SYNTAX_ONLY.value,
+            "potential_maturity": (
+                SupportMaturity.TYPED.value
+                if "solc" in available
+                else SupportMaturity.SYNTAX_ONLY.value
+            ),
+            "detected_tools": sorted(available & {"solc", "forge", "slither", "echidna", "medusa", "halmos"}),
+            "limitation": "doctor reports availability only; typed maturity requires a hash-bound compiler AST in a run, and runtime evidence is established per receipt",
+        },
+        *[
+            {
+                "dialect": dialect,
+                "maturity": SupportMaturity.SYNTAX_ONLY.value,
+                "potential_maturity": SupportMaturity.SYNTAX_ONLY.value,
+                "detected_tools": sorted(available & tools),
+                "limitation": "generic indexing only; compiler semantics and domain-complete verification are not claimed",
+            }
+            for dialect, tools in (
+                ("solana", {"cargo", "anchor"}),
+                ("move-sui", {"sui"}),
+                ("rust-native", {"cargo"}),
+                ("jvm", {"java"}),
+                ("wasm", {"wasmtime"}),
+                ("dlt-consensus", set()),
+                ("web-api", {"pytest", "node"}),
+            )
+        ],
+    ]
     return {
-        "schema_version": "1.2.0",
+        "schema_version": "2.0.0",
         "tools": jsonable(statuses),
+        "support_maturity": support,
         "capabilities": {
             "intake": True,
             "evidence_ledger": True,

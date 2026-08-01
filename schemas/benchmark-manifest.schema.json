@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-manifest.schema.json",
+  "title": "Nirvana contamination-controlled benchmark manifest",
+  "type": "object",
+  "required": ["schema_version", "benchmark_id", "cutoff", "track", "blind", "corpora", "cases", "trials"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "benchmark_id": {"type": "string", "minLength": 1},
+    "cutoff": {"type": "string", "minLength": 1},
+    "track": {"enum": ["historical_web3", "web3_exploit", "web3_hidden_variants", "solana_move", "native_jvm", "fuzzing", "continuous_discovery", "patch_quality", "novel_discovery"]},
+    "blind": {"type": "boolean"},
+    "corpora": {"type": "array", "items": {"type": "object"}},
+    "cases": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "trials": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "release_evidence": {"type": "object"}
+  },
+  "additionalProperties": false
+}

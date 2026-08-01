@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import validate_contract
-from .models import EvidenceLevel
+from .models import EVIDENCE_RANK, EvidenceLevel
 from .policy import CommandResult, CommandRunner
 from .util import canonical_json, jsonable, sha256_bytes, sha256_file, utc_now
 
@@ -23,11 +23,12 @@ MAX_ASSERTIONS = 16
 MAX_HARNESS_FILES = 4_096
 MAX_HARNESS_BYTES = 100_000_000
 MAX_CONTROL_CHANGED_FILES = 64
+STRUCTURED_RESULT_PREFIX = "NIRVANA_RESULT_JSON="
 ADAPTER_CONTRACT_VERSIONS = {
     "forge-test": 1,
     "echidna": 1,
     "medusa": 1,
-    "halmos": 1,
+    "halmos": 2,
     "cargo-test": 1,
     "pytest": 1,
     "node-test": 1,
@@ -78,6 +79,72 @@ class ExecutionClaim:
         if not security_property.strip() or not suspected_violation.strip():
             raise ValueError("execution claim fields must not be empty")
         return cls(security_property, suspected_violation)
+
+
+@dataclass(frozen=True, slots=True)
+class ImpactClaim:
+    effect: str
+    asset: str
+    description: str
+    assertion_ids: list[str]
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "ImpactClaim":
+        if not isinstance(value, dict):
+            raise ValueError("impact claim must be an object")
+        allowed = {"effect", "asset", "description", "assertion_ids"}
+        if value.keys() - allowed or allowed - value.keys():
+            raise ValueError("impact claim requires only effect, asset, description, and assertion_ids")
+        effect = str(value["effect"])
+        if effect not in {"asset_loss", "authority_gain", "consensus_failure", "equivalent_security_effect"}:
+            raise ValueError("impact effect is not an exploit-demonstration category")
+        asset = str(value["asset"])
+        description = str(value["description"])
+        assertion_ids = value["assertion_ids"]
+        if not asset.strip() or not description.strip():
+            raise ValueError("impact asset and description must not be empty")
+        if (
+            not isinstance(assertion_ids, list)
+            or not assertion_ids
+            or any(not isinstance(item, str) for item in assertion_ids)
+            or len(set(assertion_ids)) != len(assertion_ids)
+        ):
+            raise ValueError("impact assertion_ids must be a non-empty unique string array")
+        return cls(effect, asset, description, list(assertion_ids))
+
+
+@dataclass(frozen=True, slots=True)
+class FormalClaim:
+    property: str
+    assumptions: list[str]
+    completeness_scope: str
+    assertion_ids: list[str]
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "FormalClaim":
+        if not isinstance(value, dict):
+            raise ValueError("formal claim must be an object")
+        allowed = {"property", "assumptions", "completeness_scope", "assertion_ids"}
+        if value.keys() - allowed or allowed - value.keys():
+            raise ValueError(
+                "formal claim requires only property, assumptions, completeness_scope, and assertion_ids"
+            )
+        prop = str(value["property"])
+        scope = str(value["completeness_scope"])
+        assumptions = value["assumptions"]
+        assertion_ids = value["assertion_ids"]
+        if not prop.strip() or not scope.strip():
+            raise ValueError("formal property and completeness_scope must not be empty")
+        if not isinstance(assumptions, list) or any(not isinstance(item, str) for item in assumptions):
+            raise ValueError("formal assumptions must be a string array")
+        if (
+            not isinstance(assertion_ids, list)
+            or not assertion_ids
+            or any(not isinstance(item, str) for item in assertion_ids)
+            or len(set(assertion_ids)) != len(assertion_ids)
+        ):
+            raise ValueError("formal assertion_ids must be a non-empty unique string array")
+        return cls(prop, list(assumptions), scope, list(assertion_ids))
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +315,8 @@ class ExecutionRequest:
     assumptions: list[str] = field(default_factory=list)
     harness: HarnessSpec | None = None
     negative_control: NegativeControlSpec | None = None
+    impact: ImpactClaim | None = None
+    formal: FormalClaim | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ExecutionRequest":
@@ -273,6 +342,8 @@ class ExecutionRequest:
             "assumptions",
             "harness",
             "negative_control",
+            "impact",
+            "formal",
         }
         unknown = value.keys() - allowed
         if unknown:
@@ -302,8 +373,13 @@ class ExecutionRequest:
         if evidence_level not in {
             EvidenceLevel.STRUCTURALLY_CONFIRMED,
             EvidenceLevel.EXECUTABLE,
+            EvidenceLevel.EXPLOIT_DEMONSTRATED,
+            EvidenceLevel.FORMALLY_ESTABLISHED,
         }:
-            raise ValueError("runner evidence level must be structurally_confirmed or executable")
+            raise ValueError(
+                "runner evidence level must be structurally_confirmed, executable, "
+                "exploit_demonstrated, or formally_established"
+            )
         adapter = str(value["adapter"])
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", adapter) is None:
             raise ValueError("execution adapter must be a stable identifier")
@@ -351,7 +427,7 @@ class ExecutionRequest:
             raise ValueError(
                 f"execution request allows at most {MAX_ASSERTIONS} control invariants"
             )
-        if evidence_level is EvidenceLevel.EXECUTABLE and not raw_control_invariants:
+        if EVIDENCE_RANK[evidence_level] >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE] and not raw_control_invariants:
             raise ValueError(
                 "executable evidence requires at least one control invariant that passes "
                 "on both the audited and patched targets"
@@ -391,11 +467,11 @@ class ExecutionRequest:
         )
         if (
             negative_control is not None
-            and evidence_level is not EvidenceLevel.EXECUTABLE
+            and EVIDENCE_RANK[evidence_level] < EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]
         ):
             raise ValueError("negative controls apply to executable evidence only")
         if (
-            evidence_level is EvidenceLevel.EXECUTABLE
+            EVIDENCE_RANK[evidence_level] >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]
             and negative_control is None
         ):
             raise ValueError(
@@ -408,6 +484,48 @@ class ExecutionRequest:
                 negative_control.expected_return_codes,
                 "negative control expected_return_codes",
             )
+        impact = ImpactClaim.from_dict(value["impact"]) if value.get("impact") is not None else None
+        formal = FormalClaim.from_dict(value["formal"]) if value.get("formal") is not None else None
+        if evidence_level is EvidenceLevel.EXPLOIT_DEMONSTRATED:
+            if impact is None:
+                raise ValueError("exploit-demonstrated evidence requires a machine-checked impact claim")
+            unknown_impact_assertions = sorted(set(impact.assertion_ids) - set(assertion_ids))
+            if unknown_impact_assertions:
+                raise ValueError(
+                    f"impact claim references unknown exploit assertions: {unknown_impact_assertions}"
+                )
+            impact_assertions = [
+                item for item in assertions if item.assertion_id in impact.assertion_ids
+            ]
+            if any(
+                item.operator is not AssertionOperator.JSON_POINTER_EQUALS
+                for item in impact_assertions
+            ):
+                raise ValueError(
+                    "exploit impact must be decision-bound to structured JSON assertions"
+                )
+        elif impact is not None:
+            raise ValueError("impact claims apply to exploit-demonstrated evidence only")
+        if evidence_level is EvidenceLevel.FORMALLY_ESTABLISHED:
+            if formal is None:
+                raise ValueError("formally-established evidence requires an explicit formal claim")
+            unknown_formal_assertions = sorted(set(formal.assertion_ids) - set(assertion_ids))
+            if unknown_formal_assertions:
+                raise ValueError(
+                    f"formal claim references unknown proof assertions: {unknown_formal_assertions}"
+                )
+            proof_assertions = [
+                item for item in assertions if item.assertion_id in formal.assertion_ids
+            ]
+            if any(
+                item.operator is not AssertionOperator.JSON_POINTER_EQUALS
+                for item in proof_assertions
+            ):
+                raise ValueError(
+                    "formal proof results must be decision-bound to structured JSON assertions"
+                )
+        elif formal is not None:
+            raise ValueError("formal claims apply to formally-established evidence only")
         return cls(
             evidence_id=evidence_id,
             hypothesis_id=hypothesis_id,
@@ -427,6 +545,8 @@ class ExecutionRequest:
             assumptions=list(assumptions),
             harness=harness,
             negative_control=negative_control,
+            impact=impact,
+            formal=formal,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -517,12 +637,19 @@ def evaluate_assertions(
                     passed = True
                     observed = assertion.value
             else:
-                document = json.loads(text)
+                document = _structured_result_document(text)
                 observed = _resolve_json_pointer(document, assertion.pointer or "")
                 passed = observed == assertion.value
             if observed is not None:
                 observed_hash = sha256_bytes(canonical_json(observed).encode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+        ) as exc:
             error = str(exc)
         evaluations.append(
             {
@@ -533,6 +660,31 @@ def evaluate_assertions(
             }
         )
     return evaluations
+
+
+def _structured_result_document(text: str) -> Any:
+    """Read either one JSON stream or one explicit JSON result line.
+
+    Test runners normally surround harness output with their own progress and
+    summary text. The fixed marker keeps extraction deterministic and bounded;
+    multiple marked lines are rejected instead of letting target output choose
+    which security decision is evaluated.
+    """
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as stream_error:
+        marked = [
+            line.strip()[len(STRUCTURED_RESULT_PREFIX) :]
+            for line in text.splitlines()
+            if line.strip().startswith(STRUCTURED_RESULT_PREFIX)
+        ]
+        if len(marked) != 1:
+            raise ValueError(
+                "structured assertion requires one JSON document or exactly one "
+                f"{STRUCTURED_RESULT_PREFIX} line"
+            ) from stream_error
+        return json.loads(marked[0])
 
 
 def result_is_accepted(
@@ -598,7 +750,7 @@ def execution_receipt(
     negative_control: NegativeControlExecution | None = None,
 ) -> dict[str, Any]:
     receipt: dict[str, Any] = {
-        "schema_version": "1.4.0",
+        "schema_version": "1.5.0",
         "created_at": utc_now(),
         "evidence_id": request.evidence_id,
         "target": {
@@ -918,10 +1070,19 @@ def _validate_adapter_contract(
         "semgrep": executable == "semgrep",
     }
     if adapter in executable_adapters:
-        if evidence_level is not EvidenceLevel.EXECUTABLE:
-            raise ValueError(f"{adapter} may mint executable evidence only")
+        allowed_levels = {
+            EvidenceLevel.EXECUTABLE,
+            EvidenceLevel.EXPLOIT_DEMONSTRATED,
+        }
+        if adapter == "halmos":
+            allowed_levels.add(EvidenceLevel.FORMALLY_ESTABLISHED)
+        if evidence_level not in allowed_levels:
+            rendered = ", ".join(sorted(item.value for item in allowed_levels))
+            raise ValueError(f"{adapter} may mint only these evidence levels: {rendered}")
         if not executable_adapters[adapter]:
             raise ValueError(f"execution command does not match the {adapter} adapter")
+        if evidence_level is EvidenceLevel.FORMALLY_ESTABLISHED and adapter != "halmos":
+            raise ValueError("formally-established evidence requires a formal adapter")
         return
     if adapter in structural_adapters:
         if evidence_level is not EvidenceLevel.STRUCTURALLY_CONFIRMED:

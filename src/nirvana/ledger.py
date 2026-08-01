@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .util import canonical_json, sha256_bytes, utc_now
+from .contracts import validate_contract
+from .util import atomic_write_json
 
 try:
     import fcntl
@@ -83,6 +85,41 @@ class EvidenceLedger:
         records = self.records()
         self._verify_records(records)
         return len(records)
+
+    def export_checkpoint(self, output: Path) -> dict[str, Any]:
+        records = self.records()
+        self._verify_records(records)
+        if not records:
+            raise ValueError("cannot checkpoint an empty evidence ledger")
+        prefix = "".join(canonical_json(record) + "\n" for record in records).encode("utf-8")
+        checkpoint = {
+            "schema_version": "1.0.0",
+            "created_at": utc_now(),
+            "ledger_path": str(self.path.resolve(strict=True)),
+            "sequence": records[-1]["sequence"],
+            "record_hash": records[-1]["record_hash"],
+            "prefix_sha256": sha256_bytes(prefix),
+            "external_anchor": None,
+        }
+        validate_contract(checkpoint, "ledger-checkpoint.schema.json")
+        atomic_write_json(output.resolve(), checkpoint)
+        return checkpoint
+
+    def verify_checkpoint(self, checkpoint_path: Path) -> int:
+        value = json.loads(checkpoint_path.resolve(strict=True).read_text(encoding="utf-8"))
+        validate_contract(value, "ledger-checkpoint.schema.json")
+        records = self.records()
+        self._verify_records(records)
+        sequence = int(value["sequence"])
+        if len(records) < sequence:
+            raise LedgerIntegrityError("ledger is shorter than its checkpoint")
+        anchored = records[:sequence]
+        if anchored[-1]["record_hash"] != value["record_hash"]:
+            raise LedgerIntegrityError("checkpoint record hash does not match the ledger")
+        prefix = "".join(canonical_json(record) + "\n" for record in anchored).encode("utf-8")
+        if sha256_bytes(prefix) != value["prefix_sha256"]:
+            raise LedgerIntegrityError("checkpoint prefix hash does not match the ledger")
+        return sequence
 
     @staticmethod
     def _verify_records(records: list[dict[str, Any]]) -> None:

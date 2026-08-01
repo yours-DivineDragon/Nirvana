@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "entries": [
+    {
+      "deployment_id": "DEPLOYMENT-REPLACE-ME",
+      "source": "src/Contract.sol:Contract",
+      "compiler_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "built_bytecode_path": "/absolute/path/to/built-bytecode.hex",
+      "deployed_bytecode_path": "/absolute/path/to/authorized-captured-bytecode.hex",
+      "network": "REPLACE-WITH-NETWORK",
+      "address": "REPLACE-WITH-ADDRESS",
+      "capture_provenance": "Describe the authorized offline capture and its timestamp"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/ledger-checkpoint.schema.json",
+  "title": "Nirvana externally anchorable ledger checkpoint",
+  "type": "object",
+  "required": ["schema_version", "created_at", "ledger_path", "sequence", "record_hash", "prefix_sha256", "external_anchor"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "ledger_path": {"type": "string"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "record_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "prefix_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "external_anchor": {"type": ["object", "null"]}
+  },
+  "additionalProperties": false
+}

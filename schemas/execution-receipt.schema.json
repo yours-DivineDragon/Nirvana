@@ -15,7 +15,7 @@
     "result"
   ],
   "properties": {
-    "schema_version": {"const": "1.4.0"},
+    "schema_version": {"const": "1.5.0"},
     "created_at": {"type": "string"},
     "evidence_id": {"type": "string", "pattern": "^E-[A-Za-z0-9._-]+$"},
     "replay_of": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -92,13 +92,15 @@
         "assumptions",
         "harness",
         "negative_control",
+        "impact",
+        "formal",
         "stdin_base64",
         "stdin_sha256"
       ],
       "properties": {
         "evidence_id": {"type": "string"},
         "hypothesis_id": {"type": "string"},
-        "evidence_level": {"enum": ["structurally_confirmed", "executable"]},
+        "evidence_level": {"enum": ["structurally_confirmed", "executable", "exploit_demonstrated", "formally_established"]},
         "kind": {"type": "string"},
         "summary": {"type": "string"},
         "adapter": {"type": "string"},
@@ -113,6 +115,8 @@
         "assumptions": {"type": "array", "items": {"type": "string"}},
         "harness": {"type": ["object", "null"]},
         "negative_control": {"type": ["object", "null"]},
+        "impact": {"type": ["object", "null"]},
+        "formal": {"type": ["object", "null"]},
         "stdin_base64": {"type": "string"},
         "stdin_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
       },

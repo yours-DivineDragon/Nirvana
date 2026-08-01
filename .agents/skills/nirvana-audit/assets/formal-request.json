@@ -1,0 +1,49 @@
+{
+  "evidence_id": "E-REPLACE-ME",
+  "hypothesis_id": "H-REPLACE-ME",
+  "evidence_level": "formally_established",
+  "kind": "bounded_symbolic_proof",
+  "summary": "State the exact property and bounded result",
+  "adapter": "halmos",
+  "claim": {
+    "security_property": "Copy the hypothesis security_property exactly",
+    "suspected_violation": "Copy the hypothesis suspected_violation exactly"
+  },
+  "assertions": [
+    {
+      "assertion_id": "A-PROOF",
+      "source": "stdout",
+      "operator": "json_pointer_equals",
+      "pointer": "/counterexample_verified",
+      "value": true
+    }
+  ],
+  "control_invariants": [
+    {
+      "assertion_id": "A-SYMBOLIC-ENGINE-HEALTH",
+      "source": "stdout",
+      "operator": "json_pointer_equals",
+      "pointer": "/engine_completed",
+      "value": true
+    }
+  ],
+  "command": ["halmos", "--function", "check_REPLACE_ME"],
+  "cwd": ".",
+  "stdin": "",
+  "expected_return_codes": [1],
+  "replay_mode": "assertions",
+  "tool_version": "halmos REPLACE-WITH-VERSION",
+  "assumptions": ["List every bounded-model assumption"],
+  "harness": {"path": "/absolute/path/to/auditor-owned-harness"},
+  "negative_control": {
+    "target_root": "/absolute/path/to/patched-target-copy",
+    "changed_files": ["src/Contract.sol"],
+    "expected_return_codes": [0]
+  },
+  "formal": {
+    "property": "State the machine-checked property",
+    "assumptions": ["List every symbolic assumption"],
+    "completeness_scope": "State path, transaction, loop, and data bounds",
+    "assertion_ids": ["A-PROOF"]
+  }
+}

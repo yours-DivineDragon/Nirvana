@@ -19,11 +19,17 @@ class FindingGateTests(unittest.TestCase):
             causal_path=["input", "effect"],
             reproducer="test_reproducer",
             impact="impact",
+            severity_rationale="severity rationale",
             reproduction_instructions=["run test"],
             remediation="fix",
             regression_test="test_fix",
             supporting_evidence=["E-1"],
             reproducer_evidence_id=(
+                "E-1"
+                if level.value in {"executable", "exploit_demonstrated", "formally_established"}
+                else None
+            ),
+            regression_evidence_id=(
                 "E-1"
                 if level.value in {"executable", "exploit_demonstrated", "formally_established"}
                 else None

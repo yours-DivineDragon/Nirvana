@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0.0",
+  "steps": [
+    {
+      "step_id": "B-BUILD",
+      "kind": "build",
+      "command": ["forge", "build"],
+      "cwd": ".",
+      "expected_return_code": 0
+    },
+    {
+      "step_id": "B-TEST",
+      "kind": "test",
+      "command": ["forge", "test"],
+      "cwd": ".",
+      "expected_return_code": 0
+    }
+  ]
+}

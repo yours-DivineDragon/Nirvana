@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/audit-report.schema.json",
+  "title": "Nirvana audit report projection",
+  "type": "object",
+  "required": ["schema_version", "run_id", "target", "commit", "target_snapshot_sha256", "snapshot_complete", "confirmed_findings", "deduplicated_findings", "novelty_assessments", "rejection_archive", "learning_bundles", "hypothesis_count", "evidence_ceiling", "verified_evidence", "corroborated_evidence", "ledger_records", "semantic_graph", "coverage", "baseline", "cost_accounting"],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "run_id": {"type": "string"},
+    "target": {"type": "string"},
+    "commit": {"type": ["string", "null"]},
+    "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "snapshot_complete": {"type": "boolean"},
+    "confirmed_findings": {"type": "array", "items": {"type": "object"}},
+    "deduplicated_findings": {"type": "array", "items": {"type": "string"}},
+    "novelty_assessments": {"type": "object"},
+    "rejection_archive": {"type": "array", "items": {"type": "object"}},
+    "learning_bundles": {"type": "array", "items": {"type": "object"}},
+    "hypothesis_count": {"type": "integer", "minimum": 0},
+    "evidence_ceiling": {"$ref": "common.schema.json#/$defs/evidenceLevel"},
+    "verified_evidence": {"type": "array", "items": {"type": "string"}},
+    "corroborated_evidence": {"type": "array", "items": {"type": "string"}},
+    "ledger_records": {"type": "integer", "minimum": 0},
+    "semantic_graph": {"type": ["object", "null"]},
+    "coverage": {"type": ["object", "null"]},
+    "baseline": {"type": ["object", "null"]},
+    "cost_accounting": {"type": "object"}
+  },
+  "additionalProperties": false
+}

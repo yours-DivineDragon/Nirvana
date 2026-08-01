@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/baseline-receipt.schema.json",
+  "title": "Nirvana sandboxed baseline receipt",
+  "type": "object",
+  "required": ["schema_version", "created_at", "target_snapshot_sha256", "runner", "steps", "build_status", "test_status", "discovered_artifacts"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "runner": {"type": "object"},
+    "steps": {"type": "array", "items": {"type": "object"}},
+    "build_status": {"enum": ["not_selected", "passed", "failed"]},
+    "test_status": {"enum": ["not_selected", "passed", "failed"]},
+    "discovered_artifacts": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

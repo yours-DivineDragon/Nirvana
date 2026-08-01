@@ -21,7 +21,9 @@ class DifferentialTests(unittest.TestCase):
         self.assertEqual(report.mismatches, [])
 
     def test_independent_implementations_surface_odd_rounding(self) -> None:
-        policy = ExecutionPolicy(allow_host_execution=True, allow_network=True)
+        policy = ExecutionPolicy(
+            allow_host_execution=True, accept_host_network_risk=True
+        )
         report = compare(
             DifferentialManifest.load(FIXTURE / "manifest.toml"),
             CommandRunner(policy, ExecutionMode.HOST),
@@ -34,7 +36,9 @@ class DifferentialTests(unittest.TestCase):
             [item["language"] for item in report.implementations], ["python", "python"]
         )
         self.assertTrue(all(item["source_sha256"] for item in report.implementations))
-        self.assertEqual(report.to_dict()["schema_version"], "1.2.0")
+        self.assertEqual(report.to_dict()["schema_version"], "2.0.0")
+        self.assertEqual(report.mismatches[0].input, {"value": 3})
+        self.assertTrue(report.mismatches[0].outcomes[0].stdout_base64)
 
     def test_seeded_fuzzing_extends_the_corpus_deterministically(self) -> None:
         manifest = replace(
@@ -42,7 +46,9 @@ class DifferentialTests(unittest.TestCase):
             fuzz_cases=5,
             fuzz_seed=42,
         )
-        policy = ExecutionPolicy(allow_host_execution=True, allow_network=True)
+        policy = ExecutionPolicy(
+            allow_host_execution=True, accept_host_network_risk=True
+        )
         first = compare(manifest, CommandRunner(policy, ExecutionMode.HOST))
         second = compare(manifest, CommandRunner(policy, ExecutionMode.HOST))
         self.assertEqual(first.fuzz_case_count, 5)

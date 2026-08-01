@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/detector-outcome.schema.json",
+  "title": "Nirvana detector promotion outcome",
+  "type": "object",
+  "required": ["schema_version", "created_at", "finding_id", "learning_bundle_sha256", "review_sha256", "reviewer", "gates", "evidence_artifacts", "notes", "status", "scope"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "finding_id": {"type": "string"},
+    "learning_bundle_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "review_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "reviewer": {"type": "string"},
+    "gates": {"type": "object"},
+    "evidence_artifacts": {"type": "array", "items": {"type": "object"}},
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "status": {"enum": ["promoted", "rejected"]},
+    "scope": {"type": "string"}
+  },
+  "additionalProperties": false
+}

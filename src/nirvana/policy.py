@@ -20,6 +20,7 @@ class ExecutionMode(StrEnum):
 @dataclass(slots=True)
 class ExecutionPolicy:
     allow_host_execution: bool = False
+    accept_host_network_risk: bool = False
     allow_network: bool = False
     allow_git_writes: bool = False
     allow_live_chain: bool = False
@@ -38,6 +39,7 @@ class ExecutionPolicy:
             "FOUNDRY_OUT": "/work/foundry-out",
             "FOUNDRY_CACHE_PATH": "/work/foundry-cache",
             "CARGO_TARGET_DIR": "/work/cargo-target",
+            "PYTHONPYCACHEPREFIX": "/work/python-cache",
             "PYTEST_ADDOPTS": "-p no:cacheprovider",
             "NO_COLOR": "1",
         }
@@ -79,6 +81,7 @@ class ExecutionPolicy:
                 "FOUNDRY_OUT": "/work/foundry-out",
                 "FOUNDRY_CACHE_PATH": "/work/foundry-cache",
                 "CARGO_TARGET_DIR": "/work/cargo-target",
+                "PYTHONPYCACHEPREFIX": "/work/python-cache",
                 "PYTEST_ADDOPTS": "-p no:cacheprovider",
                 "NO_COLOR": "1",
             },
@@ -92,6 +95,9 @@ class ExecutionPolicy:
             raise ValueError("execution environment_allowlist must be a string array")
         return cls(
             allow_host_execution=bool(execution.get("allow_host_execution", False)),
+            accept_host_network_risk=bool(
+                execution.get("accept_host_network_risk", False)
+            ),
             allow_network=bool(execution.get("allow_network", False)),
             allow_git_writes=bool(execution.get("allow_git_writes", False)),
             allow_live_chain=bool(execution.get("allow_live_chain", False)),
@@ -131,6 +137,7 @@ class CommandRunner:
         cwd: Path,
         stdin: bytes = b"",
         harness_directory: Path | None = None,
+        artifact_directory: Path | None = None,
     ) -> CommandResult:
         if not command or any(not isinstance(part, str) or "\x00" in part for part in command):
             raise ValueError("command must be a non-empty list of safe strings")
@@ -140,34 +147,53 @@ class CommandRunner:
             resolved_harness = harness_directory.resolve(strict=True)
             if not resolved_harness.is_dir():
                 raise ValueError("execution harness is not a directory")
+        resolved_artifacts = None
+        if artifact_directory is not None:
+            resolved_artifacts = artifact_directory.resolve(strict=True)
+            if not resolved_artifacts.is_dir():
+                raise ValueError("execution artifact destination is not a directory")
+            if resolved_artifacts == resolved_cwd or resolved_cwd in resolved_artifacts.parents or resolved_artifacts in resolved_cwd.parents:
+                raise ValueError("execution artifact destination must be outside the target")
+            if resolved_harness is not None and (
+                resolved_artifacts == resolved_harness
+                or resolved_harness in resolved_artifacts.parents
+                or resolved_artifacts in resolved_harness.parents
+            ):
+                raise ValueError("execution artifact destination must be outside the harness")
         if self.mode is ExecutionMode.DENY:
             return CommandResult(command, None, b"", b"", 0, "execution is denied by default")
         blocked_reason = self._blocked_capability(command)
         if blocked_reason:
             return CommandResult(command, None, b"", b"", 0, blocked_reason)
         if self.mode is ExecutionMode.HOST:
-            if resolved_harness is not None:
+            if resolved_harness is not None or resolved_artifacts is not None:
                 return CommandResult(
                     command,
                     None,
                     b"",
                     b"",
                     0,
-                    "auditor harness overlays require Docker execution",
+                    "auditor harness and artifact overlays require Docker execution",
                 )
             if not self.policy.allow_host_execution:
                 return CommandResult(command, None, b"", b"", 0, "host execution is not allowed by policy")
-            if not self.policy.allow_network:
+            if not self.policy.accept_host_network_risk:
                 return CommandResult(
                     command,
                     None,
                     b"",
                     b"",
                     0,
-                    "host mode cannot enforce network isolation; use Docker or explicitly accept host networking",
+                    "host mode cannot enforce network isolation; use Docker or set accept_host_network_risk for reviewed fixtures",
                 )
             return self._run_host(command, resolved_cwd, stdin)
-        return self._run_docker(command, resolved_cwd, stdin, resolved_harness)
+        return self._run_docker(
+            command,
+            resolved_cwd,
+            stdin,
+            resolved_harness,
+            resolved_artifacts,
+        )
 
     def _safe_environment(self) -> dict[str, str]:
         sensitive = re.compile(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH|PRIVATE|API[_-]?KEY", re.I)
@@ -272,6 +298,7 @@ class CommandRunner:
         cwd: Path,
         stdin: bytes,
         harness_directory: Path | None,
+        artifact_directory: Path | None,
     ) -> CommandResult:
         docker = shutil.which("docker")
         if docker is None:
@@ -280,8 +307,10 @@ class CommandRunner:
             return CommandResult(command, None, b"", b"", 0, "policy does not select a pinned docker image")
         if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.policy.docker_image):
             return CommandResult(command, None, b"", b"", 0, "docker image must be pinned by SHA-256 digest")
-        if "," in str(cwd) or (
-            harness_directory is not None and "," in str(harness_directory)
+        if (
+            "," in str(cwd)
+            or (harness_directory is not None and "," in str(harness_directory))
+            or (artifact_directory is not None and "," in str(artifact_directory))
         ):
             return CommandResult(
                 command,
@@ -309,6 +338,11 @@ class CommandRunner:
                     0,
                     f"secret-like container environment is not allowed: {sorted(blocked_keys)}",
                 )
+        workspace_artifact_output = (
+            _workspace_artifact_output(command)
+            if artifact_directory is not None
+            else None
+        )
         docker_command = [
             docker,
             "run",
@@ -327,7 +361,6 @@ class CommandRunner:
             f"--tmpfs=/work:rw,exec,nosuid,nodev,size={self.policy.docker_work_bytes},mode=1777",
             "--tmpfs=/workspace/.anchor:rw,noexec,nosuid,nodev,size=64m,mode=1777",
             "--tmpfs=/workspace/.pytest_cache:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-            "--tmpfs=/workspace/artifacts:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             "--tmpfs=/workspace/broadcast:rw,noexec,nosuid,nodev,size=64m,mode=1777",
             "--tmpfs=/workspace/cache:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             "--tmpfs=/workspace/crytic-export:rw,noexec,nosuid,nodev,size=256m,mode=1777",
@@ -335,6 +368,10 @@ class CommandRunner:
             f"type=bind,src={cwd},dst=/workspace,readonly",
             "--workdir=/workspace",
         ]
+        if workspace_artifact_output != "artifacts":
+            docker_command.append(
+                "--tmpfs=/workspace/artifacts:rw,noexec,nosuid,nodev,size=256m,mode=1777"
+            )
         if harness_directory is not None:
             docker_command.extend(
                 [
@@ -342,6 +379,31 @@ class CommandRunner:
                     f"type=bind,src={harness_directory},dst=/harness,readonly",
                 ]
             )
+        if artifact_directory is not None:
+            docker_command.extend(
+                [
+                    "--mount",
+                    f"type=bind,src={artifact_directory},dst=/nirvana-artifacts",
+                ]
+            )
+            container_environment["NIRVANA_ARTIFACT_DIR"] = "/nirvana-artifacts"
+            executable = Path(command[0]).name.lower()
+            if executable == "forge":
+                container_environment["FOUNDRY_OUT"] = "/nirvana-artifacts/foundry-out"
+            if executable in {"cargo", "anchor"}:
+                container_environment["CARGO_TARGET_DIR"] = "/nirvana-artifacts/cargo-target"
+            if executable.startswith("python"):
+                container_environment["PYTHONPYCACHEPREFIX"] = "/nirvana-artifacts/python-cache"
+            if workspace_artifact_output is not None:
+                output_root = artifact_directory / workspace_artifact_output
+                output_root.mkdir(exist_ok=False)
+                output_root.chmod(0o777)
+                docker_command.extend(
+                    [
+                        "--mount",
+                        f"type=bind,src={output_root},dst=/workspace/{workspace_artifact_output}",
+                    ]
+                )
         for key in sorted(container_environment):
             docker_command.extend(["--env", f"{key}={container_environment[key]}"])
         docker_command.extend([self.policy.docker_image, *command])
@@ -379,3 +441,15 @@ class CommandRunner:
                 int((time.monotonic() - started) * 1000),
                 timed_out=True,
             )
+
+
+def _workspace_artifact_output(command: list[str]) -> str | None:
+    executable = Path(command[0]).name.lower()
+    arguments = {item.lower() for item in command[1:]}
+    if executable in {"npx", "npm", "pnpm", "yarn"} and "hardhat" in arguments:
+        return "artifacts"
+    if executable == "mvn":
+        return "target"
+    if executable in {"gradle", "gradlew", "sui"}:
+        return "build"
+    return None

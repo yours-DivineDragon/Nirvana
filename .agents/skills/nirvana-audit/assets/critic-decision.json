@@ -1,0 +1,9 @@
+{
+  "hypothesis_id": "H-REPLACE-ME",
+  "critic": "devils_advocate",
+  "decision": "sustain",
+  "reasons": ["State the falsification attempt and why the hypothesis survives or fails"],
+  "assumptions_examined": ["State the reachability, authority, economic, or sequencing assumption examined"],
+  "evidence_ids": [],
+  "next_experiment": "Run the cheapest experiment capable of resolving the remaining assumption"
+}
