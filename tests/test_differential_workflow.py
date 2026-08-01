@@ -1,0 +1,102 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from nirvana.differential import DifferentialManifest, compare, minimize_mismatch
+from nirvana.differential_workflow import (
+    attach_report,
+    classify_mismatch,
+    prepare_disclosure_packet,
+    write_feedback_package,
+)
+from nirvana.models import MismatchClass
+from nirvana.policy import CommandRunner, ExecutionMode, ExecutionPolicy
+from nirvana.util import atomic_write_json
+from nirvana.workflow import audit
+
+
+DIFF_FIXTURE = Path(__file__).parent / "fixtures" / "differential"
+EVM_FIXTURE = Path(__file__).parent / "fixtures" / "evm"
+
+
+class DifferentialWorkflowTests(unittest.TestCase):
+    def test_mismatch_enters_hypothesis_board_and_produces_disclosure_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = CommandRunner(
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
+                ExecutionMode.HOST,
+            )
+            manifest = DifferentialManifest.load(DIFF_FIXTURE / "manifest.toml")
+            report = compare(manifest, runner)
+            report_path = root / "report.json"
+            atomic_write_json(report_path, report)
+            audit_result = audit(EVM_FIXTURE, root / "runs")
+            hypotheses = attach_report(audit_result.run_directory, report_path)
+            self.assertEqual(len(hypotheses), 1)
+            self.assertEqual(hypotheses[0].generator, "differential-analysis")
+
+            triage_path = root / "triage.json"
+            triage = classify_mismatch(
+                report_path,
+                "odd",
+                MismatchClass.SPEC_AMBIGUITY,
+                ["both interpretations are consistent with the unqualified rounding prose"],
+                triage_path,
+                audit_result.run_directory,
+            )
+            self.assertEqual(triage["classification"], "spec_ambiguity")
+
+            minimized = minimize_mismatch(manifest, runner, "odd", max_steps=16)
+            minimization_path = root / "minimized.json"
+            atomic_write_json(minimization_path, minimized)
+            self.assertEqual(minimized["case_id"], "odd")
+            self.assertLessEqual(
+                len(json.dumps(minimized["minimized_input"])),
+                len(json.dumps(minimized["original_input"])),
+            )
+
+            feedback_path = root / "feedback.json"
+            feedback = write_feedback_package(
+                triage_path,
+                minimization_path,
+                "Define integer division as floor toward negative infinity.",
+                "Add the minimized odd input to the canonical corpus.",
+                feedback_path,
+                audit_result.run_directory,
+            )
+            self.assertEqual(feedback["corpus_case"]["input"], minimized["minimized_input"])
+
+            context_path = root / "agent-context.json"
+            context_path.write_text(
+                json.dumps(
+                    {
+                        "agent": "codex",
+                        "model": "local-agent-session",
+                        "prompt_sha256": "b" * 64,
+                        "tool_permissions": ["read", "sandboxed-execute"],
+                        "untrusted_content_in_scope": True,
+                        "prompt_injection_indicators": [],
+                    }
+                )
+            )
+            packet_path = root / "private-packet.json"
+            packet = prepare_disclosure_packet(
+                report_path,
+                triage_path,
+                minimization_path,
+                context_path,
+                "Different rounding can produce cross-client settlement disagreement.",
+                packet_path,
+                audit_result.run_directory,
+            )
+            self.assertFalse(packet["handling"]["automatic_delivery"])
+            self.assertEqual(packet["classification"], "spec_ambiguity")
+            self.assertEqual(len(packet["normalized_outputs"]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

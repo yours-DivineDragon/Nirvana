@@ -8,6 +8,7 @@ from nirvana.verification import (
     AdapterOutcome,
     ExecutionRequest,
     classify_adapter_outcome,
+    evaluate_assertions,
     snapshot_harness,
 )
 
@@ -52,6 +53,79 @@ def request() -> dict:
 
 
 class VerificationContractTests(unittest.TestCase):
+    def test_structured_assertion_accepts_one_marked_json_line_in_tool_output(self) -> None:
+        value = request()
+        value["assertions"][0] = {
+            "assertion_id": "A-1",
+            "source": "stdout",
+            "operator": "json_pointer_equals",
+            "pointer": "/authority_gained",
+            "value": True,
+        }
+        parsed = ExecutionRequest.from_dict(value)
+        result = CommandResult(
+            parsed.command,
+            0,
+            (
+                b"================ test session starts ================\n"
+                b'NIRVANA_RESULT_JSON={"authority_gained":true,"baseline_passed":true}\n'
+                b"================= 2 passed in 0.02s =================\n"
+            ),
+            b"",
+            1,
+        )
+        evaluated = evaluate_assertions(parsed, result)
+        self.assertTrue(evaluated[0]["passed"])
+
+        duplicate = CommandResult(
+            parsed.command,
+            0,
+            result.stdout + b'NIRVANA_RESULT_JSON={"authority_gained":false}\n',
+            b"",
+            1,
+        )
+        evaluated = evaluate_assertions(parsed, duplicate)
+        self.assertFalse(evaluated[0]["passed"])
+        self.assertIn("exactly one", evaluated[0]["error"])
+
+    def test_exploit_demonstrated_requires_assertion_bound_impact(self) -> None:
+        value = request()
+        value["evidence_level"] = "exploit_demonstrated"
+        with self.assertRaisesRegex(ValueError, "requires a machine-checked impact claim"):
+            ExecutionRequest.from_dict(value)
+        value["assertions"][0].update(
+            {"operator": "json_pointer_equals", "value": True, "pointer": "/authority_gained"}
+        )
+        value["impact"] = {
+            "effect": "authority_gain",
+            "asset": "gateway administration",
+            "description": "an unprivileged caller gained administrator authority",
+            "assertion_ids": ["A-1"],
+        }
+        parsed = ExecutionRequest.from_dict(value)
+        self.assertEqual(parsed.evidence_level.value, "exploit_demonstrated")
+        self.assertEqual(parsed.impact.effect, "authority_gain")
+
+    def test_formal_tier_requires_halmos_scope_assumptions_and_proof_assertions(self) -> None:
+        value = request()
+        value["evidence_level"] = "formally_established"
+        value["adapter"] = "halmos"
+        value["command"] = ["halmos"]
+        with self.assertRaisesRegex(ValueError, "requires an explicit formal claim"):
+            ExecutionRequest.from_dict(value)
+        value["assertions"][0].update(
+            {"operator": "json_pointer_equals", "value": True, "pointer": "/counterexample_verified"}
+        )
+        value["formal"] = {
+            "property": "no unauthorized authority transition exists within the bounded state space",
+            "assumptions": ["bounded calldata length"],
+            "completeness_scope": "all paths up to eight transactions",
+            "assertion_ids": ["A-1"],
+        }
+        parsed = ExecutionRequest.from_dict(value)
+        self.assertEqual(parsed.evidence_level.value, "formally_established")
+        self.assertEqual(parsed.formal.completeness_scope, "all paths up to eight transactions")
+
     def test_expected_return_code_must_be_singular(self) -> None:
         value = request()
         value["expected_return_codes"] = [0, 1]

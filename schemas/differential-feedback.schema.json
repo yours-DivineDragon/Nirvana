@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/differential-feedback.schema.json",
+  "title": "Nirvana differential spec-and-test feedback proposal",
+  "type": "object",
+  "required": ["schema_version", "created_at", "case_id", "classification", "triage_sha256", "minimization_sha256", "spec_amendment", "regression_test", "corpus_case", "application_status"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "case_id": {"type": "string"},
+    "classification": {"type": "string"},
+    "triage_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "minimization_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "spec_amendment": {"type": "string", "minLength": 1},
+    "regression_test": {"type": "string", "minLength": 1},
+    "corpus_case": {"type": "object"},
+    "application_status": {"type": "string"}
+  },
+  "additionalProperties": false
+}

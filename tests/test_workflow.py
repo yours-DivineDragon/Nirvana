@@ -24,7 +24,12 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(report["target_snapshot_sha256"], scope["target_snapshot_sha256"])
             self.assertEqual(report["verified_evidence"], [])
             self.assertEqual(report["corroborated_evidence"], [])
-            self.assertEqual(EvidenceLedger(result.run_directory / "evidence.jsonl").verify(), 4)
+            self.assertTrue((result.run_directory / "semantic-graph.json").is_file())
+            self.assertTrue((result.run_directory / "coverage.json").is_file())
+            records = EvidenceLedger(result.run_directory / "evidence.jsonl").records()
+            events = {item["payload"]["event"] for item in records}
+            self.assertIn("semantic_graph_created", events)
+            self.assertIn("coverage_schedule_created", events)
 
 
 if __name__ == "__main__":

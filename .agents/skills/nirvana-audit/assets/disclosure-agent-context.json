@@ -1,0 +1,8 @@
+{
+  "agent": "codex-or-claude-code-or-kimi-code",
+  "model": "REPLACE-WITH-EXACT-MODEL",
+  "prompt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tool_permissions": ["Describe the exact filesystem, execution, and network boundary"],
+  "untrusted_content_in_scope": ["List target or retrieved content visible to the agent"],
+  "prompt_injection_indicators": []
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/differential-minimization.schema.json",
+  "title": "Nirvana minimized divergent seed",
+  "type": "object",
+  "required": ["schema_version", "created_at", "case_id", "manifest_sha256", "spec_sha256", "original_input", "original_input_sha256", "minimized_input", "minimized_input_sha256", "attempted_reductions", "accepted_reductions", "outcomes"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "case_id": {"type": "string"},
+    "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "original_input": {},
+    "original_input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "minimized_input": {},
+    "minimized_input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "attempted_reductions": {"type": "integer", "minimum": 0},
+    "accepted_reductions": {"type": "integer", "minimum": 0},
+    "outcomes": {"type": "array", "minItems": 2, "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

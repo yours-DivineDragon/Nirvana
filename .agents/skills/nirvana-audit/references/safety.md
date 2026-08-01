@@ -13,7 +13,7 @@ Read this file before target execution, external research, or disclosure.
 
 - Default mode is `deny`.
 - Use Docker only with a pinned image digest, non-root user, read-only target mount, no network, no secrets, dropped capabilities, bounded processes/memory/time, and disposable writable tool storage.
-- Use host execution only for locally authored reviewed fixtures. It requires `allow_host_execution = true`, explicit acceptance that host networking cannot be isolated, and `--execution-mode host`.
+- Use host execution only for locally authored reviewed fixtures. It requires `allow_host_execution = true`, `accept_host_network_risk = true`, and `--execution-mode host`. Keep `allow_network = false`; the risk acknowledgement does not enable Docker networking.
 - Never forward the host environment wholesale. Record only an allowlisted, redacted environment description.
 - Never run generated `curl | shell`, opaque shell command strings, package lifecycle scripts, live-chain transactions, signing, deployment, or target-context Git.
 

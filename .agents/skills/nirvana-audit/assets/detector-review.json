@@ -1,0 +1,17 @@
+{
+  "finding_id": "F-REPLACE-ME",
+  "positive_regression": false,
+  "negative_benign_cases": false,
+  "cross_project_generalisation": false,
+  "performance_noise_budget": false,
+  "human_review": false,
+  "provenance_licence": false,
+  "evidence_artifacts": [
+    {
+      "path": "/absolute/path/to/review-artifact",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "reviewer": "REPLACE-WITH-REVIEWER",
+  "notes": ["Every gate must be supported by the hashed review artifacts"]
+}

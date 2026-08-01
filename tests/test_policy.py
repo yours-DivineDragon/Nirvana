@@ -19,7 +19,9 @@ class PolicyTests(unittest.TestCase):
     def test_git_mutation_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = CommandRunner(
-                ExecutionPolicy(allow_host_execution=True, allow_network=True),
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
                 ExecutionMode.HOST,
             ).run(["git", "commit", "-m", "no"], Path(directory))
             self.assertEqual(result.blocked_reason, "git mutation is not allowed by policy")
@@ -35,7 +37,9 @@ class PolicyTests(unittest.TestCase):
     def test_opaque_shell_and_forge_create_are_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             runner = CommandRunner(
-                ExecutionPolicy(allow_host_execution=True, allow_network=True),
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
                 ExecutionMode.HOST,
             )
             shell = runner.run(["bash", "-c", "git commit -am pwn"], Path(directory))
@@ -101,6 +105,36 @@ class PolicyTests(unittest.TestCase):
             self.assertIn(
                 f"type=bind,src={harness.resolve()},dst=/harness,readonly",
                 mounts,
+            )
+
+    def test_baseline_routes_hardhat_outputs_to_the_auditor_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as artifact_directory, patch(
+            "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
+        ), patch("nirvana.policy.subprocess.run") as run:
+            artifacts = Path(artifact_directory)
+            run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
+            result = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            ).run(
+                ["npx", "hardhat", "compile"],
+                Path(directory),
+                artifact_directory=artifacts,
+            )
+
+            self.assertEqual(result.return_code, 0)
+            command = run.call_args.args[0]
+            mounts = [
+                command[index + 1]
+                for index, item in enumerate(command[:-1])
+                if item == "--mount"
+            ]
+            self.assertIn(
+                f"type=bind,src={(artifacts / 'artifacts').resolve()},dst=/workspace/artifacts",
+                mounts,
+            )
+            self.assertFalse(
+                any(item.startswith("--tmpfs=/workspace/artifacts:") for item in command)
             )
 
 

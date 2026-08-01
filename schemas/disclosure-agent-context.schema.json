@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/disclosure-agent-context.schema.json",
+  "title": "Nirvana disclosure agent context",
+  "type": "object",
+  "required": ["agent", "model", "prompt_sha256", "tool_permissions", "untrusted_content_in_scope", "prompt_injection_indicators"],
+  "properties": {
+    "agent": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "prompt_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "tool_permissions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "untrusted_content_in_scope": {
+      "type": ["boolean", "array"],
+      "items": {"type": "string", "minLength": 1}
+    },
+    "prompt_injection_indicators": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

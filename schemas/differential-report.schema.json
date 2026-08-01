@@ -4,16 +4,34 @@
   "title": "Nirvana differential report",
   "type": "object",
   "required": [
-    "schema_version", "created_at", "spec_sha256", "corpus_sha256",
+    "schema_version", "created_at", "spec_sha256", "corpus_sha256", "manifest_sha256",
+    "spec_path", "corpus_path", "normalizer", "runner",
     "implementations", "corpus_case_count", "requested_fuzz_case_count",
     "fuzz_case_count", "case_count", "repetitions", "fuzz_seed", "mismatches",
-    "blocked_executions", "flaky_executions", "warnings"
+    "blocked_executions", "flaky_executions", "truncated_transcripts", "warnings"
   ],
   "properties": {
-    "schema_version": {"const": "1.2.0"},
+    "schema_version": {"const": "2.0.0"},
     "created_at": {"type": "string"},
     "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "corpus_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "spec_path": {"type": "string", "minLength": 1},
+    "corpus_path": {"type": "string", "minLength": 1},
+    "normalizer": {"enum": ["json", "text"]},
+    "runner": {
+      "type": "object",
+      "required": ["mode", "policy_sha256", "docker_image", "network_allowed", "host_execution_allowed", "host_network_risk_accepted"],
+      "properties": {
+        "mode": {"enum": ["deny", "host", "docker"]},
+        "policy_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "docker_image": {"type": ["string", "null"]},
+        "network_allowed": {"type": "boolean"},
+        "host_execution_allowed": {"type": "boolean"},
+        "host_network_risk_accepted": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
     "implementations": {
       "type": "array",
       "minItems": 2,
@@ -43,15 +61,18 @@
     "fuzz_seed": {"type": "integer"},
     "blocked_executions": {"type": "integer", "minimum": 0},
     "flaky_executions": {"type": "integer", "minimum": 0},
+    "truncated_transcripts": {"type": "integer", "minimum": 0},
     "warnings": {"type": "array", "items": {"type": "string"}},
     "mismatches": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["case_id", "input_sha256", "outcomes", "classification", "notes"],
+        "required": ["case_id", "input_sha256", "input", "minimized_input", "outcomes", "classification", "notes"],
         "properties": {
           "case_id": {"type": "string"},
           "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "input": {},
+          "minimized_input": {},
           "classification": {"enum": ["unclassified", "harness_bug", "implementation_bug", "spec_ambiguity", "clear_but_unsafe_spec"]},
           "notes": {"type": "array", "items": {"type": "string"}},
           "outcomes": {
@@ -59,13 +80,16 @@
             "minItems": 2,
             "items": {
               "type": "object",
-              "required": ["implementation", "return_code", "normalized_output", "stdout_sha256", "stderr_sha256", "duration_ms", "run_count", "flaky", "observed_signatures", "error"],
+              "required": ["implementation", "return_code", "normalized_output", "stdout_sha256", "stderr_sha256", "stdout_base64", "stderr_base64", "transcript_truncated", "duration_ms", "run_count", "flaky", "observed_signatures", "error"],
               "properties": {
                 "implementation": {"type": "string"},
                 "return_code": {"type": ["integer", "null"]},
                 "normalized_output": {"type": ["string", "null"]},
                 "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
                 "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "stdout_base64": {"type": "string"},
+                "stderr_base64": {"type": "string"},
+                "transcript_truncated": {"type": "boolean"},
                 "duration_ms": {"type": "integer", "minimum": 0},
                 "run_count": {"type": "integer", "minimum": 2},
                 "flaky": {"type": "boolean"},

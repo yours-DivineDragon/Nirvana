@@ -11,6 +11,9 @@ excluded_directories = ["generated-artifacts"]
 [execution]
 # Locked down by default. Host execution must be an explicit local decision.
 allow_host_execution = false
+# Host networking cannot be isolated. Set this only for locally authored,
+# reviewed fixtures; it does not enable network inside Docker.
+accept_host_network_risk = false
 allow_network = false
 allow_git_writes = false
 allow_live_chain = false
@@ -35,5 +38,6 @@ XDG_CACHE_HOME = "/work/cache"
 FOUNDRY_OUT = "/work/foundry-out"
 FOUNDRY_CACHE_PATH = "/work/foundry-cache"
 CARGO_TARGET_DIR = "/work/cargo-target"
+PYTHONPYCACHEPREFIX = "/work/python-cache"
 PYTEST_ADDOPTS = "-p no:cacheprovider"
 NO_COLOR = "1"

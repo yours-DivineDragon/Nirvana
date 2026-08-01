@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-report.schema.json",
+  "title": "Nirvana benchmark evaluation report",
+  "type": "object",
+  "required": ["schema_version", "created_at", "benchmark_id", "manifest_sha256", "track", "temporal_validation", "counts", "metrics", "magma", "release_gates", "warnings"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "benchmark_id": {"type": "string"},
+    "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "track": {"type": "string"},
+    "temporal_validation": {"type": "object"},
+    "counts": {"type": "object"},
+    "metrics": {"type": "object"},
+    "magma": {"type": "object"},
+    "release_gates": {"type": "object"},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

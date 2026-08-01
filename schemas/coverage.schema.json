@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/coverage.schema.json",
+  "title": "Nirvana business-flow coverage schedule",
+  "type": "object",
+  "required": ["schema_version", "created_at", "graph_sha256", "flows", "threat_lenses", "tasks", "tracked", "completeness"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string"},
+    "graph_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "flows": {"type": "array", "items": {"type": "object"}},
+    "threat_lenses": {"type": "array", "items": {"type": "string"}},
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task_id", "flow_id", "threat_lens", "risk", "status", "graph_slice", "candidate_hypotheses", "evidence_ids", "notes"],
+        "properties": {
+          "task_id": {"type": "string", "pattern": "^C-[A-Za-z0-9._-]+$"},
+          "flow_id": {"type": "string"},
+          "threat_lens": {"type": "string"},
+          "risk": {"type": "number", "minimum": 0},
+          "status": {"enum": ["scheduled", "in_progress", "covered", "blocked"]},
+          "graph_slice": {"type": "array", "items": {"type": "string"}},
+          "candidate_hypotheses": {"type": "array", "items": {"type": "string"}},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "notes": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "tracked": {"type": "object"},
+    "completeness": {"type": "object"}
+  },
+  "additionalProperties": false
+}

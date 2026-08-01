@@ -26,6 +26,17 @@ class EvidenceLedgerTests(unittest.TestCase):
             with self.assertRaises(LedgerIntegrityError):
                 ledger.verify()
 
+    def test_checkpoint_remains_valid_after_later_appends(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.jsonl"
+            checkpoint = Path(directory) / "checkpoint.json"
+            ledger = EvidenceLedger(path)
+            ledger.append({"event": "one"})
+            exported = ledger.export_checkpoint(checkpoint)
+            ledger.append({"event": "two"})
+            self.assertEqual(exported["sequence"], 1)
+            self.assertEqual(ledger.verify_checkpoint(checkpoint), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

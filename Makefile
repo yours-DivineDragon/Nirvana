@@ -6,17 +6,8 @@ test:
 check:
 	PYTHONPATH=src python3 -m compileall -q src tests
 	PYTHONPATH=src python3 -m unittest discover -s tests -v
-	python3 -m json.tool schemas/common.schema.json >/dev/null
-	python3 -m json.tool schemas/hypothesis.schema.json >/dev/null
-	python3 -m json.tool schemas/evidence.schema.json >/dev/null
-	python3 -m json.tool schemas/execution-request.schema.json >/dev/null
-	python3 -m json.tool schemas/execution-receipt.schema.json >/dev/null
-	python3 -m json.tool schemas/finding.schema.json >/dev/null
-	python3 -m json.tool schemas/differential-report.schema.json >/dev/null
-	python3 -m json.tool .agents/skills/nirvana-audit/assets/hypothesis.json >/dev/null
-	python3 -m json.tool .agents/skills/nirvana-audit/assets/evidence.json >/dev/null
-	python3 -m json.tool .agents/skills/nirvana-audit/assets/execution-request.json >/dev/null
-	python3 -m json.tool .agents/skills/nirvana-audit/assets/finding.json >/dev/null
+	python3 -c 'import json, pathlib; [json.loads(path.read_text()) for path in pathlib.Path("schemas").glob("*.json")]'
+	python3 -c 'import json, pathlib; [json.loads(path.read_text()) for path in pathlib.Path(".agents/skills/nirvana-audit/assets").glob("*.json")]'
 
 audit-fixture:
 	PYTHONPATH=src python3 -m nirvana audit tests/fixtures/evm --output nirvana-runs

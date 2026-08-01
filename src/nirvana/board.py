@@ -4,11 +4,22 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .adjudication import current_hypothesis_status
+from .contracts import validate_contract
 from .intake import MAX_SCOPE_BYTES, RepositoryIntake, ScopeManifest, validate_scope_against_ledger
 from .ledger import EvidenceLedger
-from .models import EVIDENCE_RANK, EvidenceLevel, EvidenceRecord, Finding, Hypothesis
+from .models import (
+    EVIDENCE_RANK,
+    EvidenceLevel,
+    EvidenceRecord,
+    Finding,
+    Hypothesis,
+    HypothesisStatus,
+    NoveltyClass,
+)
 from .policy import CommandRunner, ExecutionMode
-from .util import atomic_write_json, sha256_file
+from .semantic import SecuritySemanticGraph
+from .util import atomic_write_json, sha256_file, utc_now
 from .verification import (
     AdapterOutcome,
     ExecutionRequest,
@@ -85,11 +96,14 @@ class HypothesisBoard:
     def execute_evidence(self, path: Path, runner: CommandRunner) -> EvidenceRecord:
         request = ExecutionRequest.from_dict(self._read_json(path))
         hypothesis = self._hypothesis_by_id(request.hypothesis_id)
+        if hypothesis.status is HypothesisStatus.REJECTED:
+            raise ValueError("rejected hypothesis must be rescued before further verification")
         self._validate_request_claim(request, hypothesis)
         self._require_new_evidence_id(request.evidence_id)
         if (
             runner.mode is ExecutionMode.HOST
-            and request.evidence_level is EvidenceLevel.EXECUTABLE
+            and EVIDENCE_RANK[request.evidence_level]
+            >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]
         ):
             raise ValueError(
                 "host execution cannot mint executable evidence; use a digest-pinned Docker policy"
@@ -263,6 +277,14 @@ class HypothesisBoard:
                     if negative_control is not None
                     else []
                 ),
+                "duration_ms": result.duration_ms,
+                "negative_control_duration_ms": (
+                    negative_control.result.duration_ms
+                    if negative_control is not None
+                    else 0
+                ),
+                "impact": request.impact,
+                "formal": request.formal,
                 **signature,
             },
         )
@@ -522,8 +544,8 @@ class HypothesisBoard:
         payloads = [event]
         next_ceiling: EvidenceLevel | None = None
         ceiling_basis: str | list[str] = evidence.evidence_id
-        if verified and evidence.level is EvidenceLevel.EXECUTABLE:
-            next_ceiling = EvidenceLevel.EXECUTABLE
+        if verified and EVIDENCE_RANK[evidence.level] >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
+            next_ceiling = evidence.level
         elif verified and evidence.level is EvidenceLevel.STRUCTURALLY_CONFIRMED:
             corroboration = self._structural_corroboration_basis(
                 evidence.hypothesis_id or "", evidence.evidence_id
@@ -575,6 +597,12 @@ class HypothesisBoard:
                 f"({scope.evidence_ceiling.value})"
             )
         hypothesis = self._hypothesis_by_id(finding.hypothesis_id)
+        if hypothesis.status is HypothesisStatus.REJECTED:
+            raise ValueError("a rejected hypothesis cannot become a finding until rescued")
+        if finding.novelty is not NoveltyClass.UNCERTAIN:
+            raise ValueError(
+                "novelty is assessed only after evidence-gated confirmation against a provenance-bearing corpus"
+            )
         if finding.security_property != hypothesis.security_property:
             raise ValueError("finding security property does not match its hypothesis")
         verified_evidence = self._currently_verified_evidence_ids()
@@ -617,6 +645,47 @@ class HypothesisBoard:
             finding.evidence_level
         ]:
             raise ValueError("finding evidence level exceeds its recorded supporting evidence")
+        graph_path = self.run_directory / "semantic-graph.json"
+        graph_record = next(
+            (
+                record["payload"]
+                for record in self.ledger.records()
+                if record["payload"].get("event") == "semantic_graph_created"
+            ),
+            None,
+        )
+        if graph_record is None or sha256_file(graph_path) != graph_record.get("artifact_sha256"):
+            raise ValueError("finding cannot bind to an unverified Security Semantic Graph")
+        graph = SecuritySemanticGraph.from_dict(
+            json.loads(graph_path.read_text(encoding="utf-8"))
+        )
+        allowed_causal_nodes = {item.node_id for item in graph.nodes} | set(
+            hypothesis.graph_slice
+        )
+        unknown_causal_nodes = sorted(set(finding.causal_path) - allowed_causal_nodes)
+        if unknown_causal_nodes:
+            raise ValueError(
+                f"finding causal path references nodes outside its Security Semantic Graph: {unknown_causal_nodes}"
+            )
+        if hypothesis.graph_slice and not set(finding.causal_path) & set(hypothesis.graph_slice):
+            raise ValueError("finding causal path is disconnected from its hypothesis graph slice")
+        graph_node_ids = {item.node_id for item in graph.nodes}
+        graph_path_nodes = [
+            item for item in finding.causal_path if item in graph_node_ids
+        ]
+        graph_edges = {(item.source, item.target) for item in graph.edges}
+        disconnected = [
+            (source, target)
+            for source, target in zip(
+                graph_path_nodes, graph_path_nodes[1:], strict=False
+            )
+            if (source, target) not in graph_edges
+        ]
+        if disconnected:
+            raise ValueError(
+                "finding causal path contains disconnected or reverse-ordered SSG "
+                f"steps: {disconnected}"
+            )
         if finding.evidence_level is EvidenceLevel.STRUCTURALLY_CONFIRMED:
             structural_adapters = {"solc-ast", "slither", "semgrep"}
             structural_support = [
@@ -639,24 +708,47 @@ class HypothesisBoard:
                 raise ValueError(
                     "finding reproducer lacks a runner-verified negative control"
                 )
+        if finding.regression_evidence_id is not None:
+            regression = evidence_by_id[finding.regression_evidence_id]
+            if EVIDENCE_RANK[regression.level] < EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
+                raise ValueError("finding regression evidence is not executable")
+            if regression.metadata.get("negative_control_verified") is not True:
+                raise ValueError("finding regression evidence lacks a verified patched-target control")
         if finding.finding_id in self._ids_for_event("finding_confirmed", "finding_id"):
             raise ValueError(f"finding already exists: {finding.finding_id}")
-        self.ledger.append(
-            {
-                "event": "finding_confirmed",
-                "finding": finding.to_dict(),
-                "import": self._provenance(path),
-            }
+        learning_bundle = self._learning_bundle(finding, hypothesis, supporting)
+        learning_path = self.run_directory / "learning" / f"{finding.finding_id}.json"
+        atomic_write_json(learning_path, learning_bundle)
+        learning_digest = sha256_file(learning_path)
+        self.ledger.append_many(
+            [
+                {
+                    "event": "finding_confirmed",
+                    "finding": finding.to_dict(),
+                    "import": self._provenance(path),
+                },
+                {
+                    "event": "learning_bundle_created",
+                    "finding_id": finding.finding_id,
+                    "artifact_path": str(learning_path),
+                    "artifact_sha256": learning_digest,
+                    "promotion_status": "candidate",
+                },
+            ]
         )
         self._refresh_report()
         return finding
 
     def list_hypotheses(self) -> list[dict[str, Any]]:
-        return [
-            record["payload"]["hypothesis"]
-            for record in self.ledger.records()
-            if record["payload"].get("event") == "hypothesis_proposed"
-        ]
+        records = self.ledger.records()
+        values: list[dict[str, Any]] = []
+        for record in records:
+            if record["payload"].get("event") != "hypothesis_proposed":
+                continue
+            hypothesis = Hypothesis.from_dict(record["payload"]["hypothesis"])
+            hypothesis.status = current_hypothesis_status(records, hypothesis.hypothesis_id)
+            values.append(hypothesis.to_dict())
+        return values
 
     def _require_known_hypothesis(self, hypothesis_id: str) -> None:
         known = self._ids_for_event("hypothesis_proposed", "hypothesis_id")
@@ -674,7 +766,91 @@ class HypothesisBoard:
             raise ValueError(f"unknown hypothesis: {hypothesis_id}")
         if len(matches) != 1:
             raise ValueError(f"duplicate hypotheses exist: {hypothesis_id}")
-        return matches[0]
+        hypothesis = matches[0]
+        hypothesis.status = current_hypothesis_status(
+            self.ledger.records(), hypothesis.hypothesis_id
+        )
+        return hypothesis
+
+    def _learning_bundle(
+        self,
+        finding: Finding,
+        hypothesis: Hypothesis,
+        supporting: list[EvidenceRecord],
+    ) -> dict[str, Any]:
+        reproducer = next(
+            (
+                item
+                for item in supporting
+                if item.evidence_id == finding.reproducer_evidence_id
+            ),
+            supporting[0],
+        )
+        regression = next(
+            (
+                item
+                for item in supporting
+                if item.evidence_id == finding.regression_evidence_id
+            ),
+            reproducer,
+        )
+        bundle = {
+            "schema_version": "1.0.0",
+            "finding_id": finding.finding_id,
+            "hypothesis_id": finding.hypothesis_id,
+            "created_at": utc_now(),
+            "regression": {
+                "description": finding.regression_test,
+                "evidence_id": regression.evidence_id,
+                "receipt_path": regression.artifact_path,
+                "receipt_sha256": regression.artifact_sha256,
+                "negative_control_verified": regression.metadata.get(
+                    "negative_control_verified", False
+                ),
+            },
+            "minimized_reproducer": {
+                "command": list(reproducer.command),
+                "artifact_sha256": reproducer.artifact_sha256,
+                "status": "hash-bound; minimize further only under the same verification contract",
+            },
+            "graph_query_candidate": {
+                "graph_slice": list(finding.causal_path),
+                "security_property": finding.security_property,
+                "status": "candidate",
+            },
+            "false_positive_conditions": sorted(
+                set(finding.assumptions + hypothesis.contradicting_evidence)
+            ),
+            "domain_rule_candidate": {
+                "threat_lens": hypothesis.threat_lens,
+                "root_cause": finding.root_cause,
+                "status": "candidate",
+            },
+            "fuzz_seed": {
+                "evidence_id": reproducer.evidence_id,
+                "source": "verified execution receipt",
+            },
+            "state_transition_objective": {
+                "causal_path": list(finding.causal_path),
+                "impact": finding.impact,
+            },
+            "variant_template": {
+                "security_property": finding.security_property,
+                "root_cause": finding.root_cause,
+                "attacker_prerequisites": list(finding.attacker_prerequisites),
+                "fix_strategy": finding.remediation,
+            },
+            "promotion_gates": {
+                "positive_regression": "pending",
+                "negative_benign_cases": "pending",
+                "cross_project_generalisation": "pending",
+                "performance_and_noise_budget": "pending",
+                "human_review": "required",
+                "provenance_and_licence": "pending",
+            },
+        }
+        validate_contract(bundle, "learning-bundle.schema.json")
+        return bundle
 
     @staticmethod
     def _validate_request_claim(request: ExecutionRequest, hypothesis: Hypothesis) -> None:

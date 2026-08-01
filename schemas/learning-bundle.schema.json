@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/learning-bundle.schema.json",
+  "title": "Nirvana validated-finding learning bundle",
+  "type": "object",
+  "required": ["schema_version", "finding_id", "hypothesis_id", "created_at", "regression", "minimized_reproducer", "graph_query_candidate", "false_positive_conditions", "domain_rule_candidate", "fuzz_seed", "state_transition_objective", "variant_template", "promotion_gates"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "finding_id": {"type": "string"},
+    "hypothesis_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "regression": {"type": "object"},
+    "minimized_reproducer": {"type": "object"},
+    "graph_query_candidate": {"type": "object"},
+    "false_positive_conditions": {"type": "array", "items": {"type": "string"}},
+    "domain_rule_candidate": {"type": "object"},
+    "fuzz_seed": {"type": "object"},
+    "state_transition_objective": {"type": "object"},
+    "variant_template": {"type": "object"},
+    "promotion_gates": {"type": "object"}
+  },
+  "additionalProperties": false
+}

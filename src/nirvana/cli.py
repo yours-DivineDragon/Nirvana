@@ -6,14 +6,28 @@ import sys
 import tomllib
 from pathlib import Path
 
+from .adjudication import AdjudicationBoard
+from .baseline import run_baseline
 from .board import HypothesisBoard
-from .differential import DifferentialManifest, compare
+from .coverage import CoverageBoard
+from .differential import DifferentialManifest, compare, minimize_mismatch
+from .differential_workflow import (
+    attach_report,
+    classify_mismatch,
+    prepare_disclosure_packet,
+    write_feedback_package,
+)
+from .deployment import verify_deployments
 from .doctor import doctor_report
+from .evaluation import write_benchmark_report
 from .intake import IntakePolicy
 from .ledger import EvidenceLedger
+from .learning import review_detector_candidate
+from .models import MismatchClass
 from .policy import CommandRunner, ExecutionMode, ExecutionPolicy
 from .util import atomic_write_json
 from .verification import snapshot_harness
+from .variants import mine_historical_variants
 from .workflow import audit
 
 
@@ -22,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.3.1")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.0")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -33,6 +47,17 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser.add_argument("--output", type=Path, default=Path("nirvana-runs"))
     audit_parser.add_argument(
         "--policy", type=Path, help="shared TOML policy, including [intake] controls"
+    )
+    audit_parser.add_argument(
+        "--baseline-request",
+        type=Path,
+        help="reviewed build/test baseline request executed before semantic analysis",
+    )
+    audit_parser.add_argument(
+        "--execution-mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default=ExecutionMode.DENY.value,
+        help="execution mode used only when --baseline-request is supplied",
     )
     audit_parser.add_argument(
         "--solc-ast",
@@ -47,6 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
     hypothesis_import.add_argument("path", type=Path)
     hypothesis_list = hypothesis_commands.add_parser("list", help="list hypotheses from the ledger")
     hypothesis_list.add_argument("run_directory", type=Path)
+    hypothesis_critique = hypothesis_commands.add_parser(
+        "critique", help="record a typed Devil's Advocate or Rescue Critic decision"
+    )
+    hypothesis_critique.add_argument("run_directory", type=Path)
+    hypothesis_critique.add_argument("path", type=Path)
 
     evidence = commands.add_parser("evidence", help="append typed evidence to a run ledger")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
@@ -79,11 +109,42 @@ def build_parser() -> argparse.ArgumentParser:
     finding_confirm = finding_commands.add_parser("confirm")
     finding_confirm.add_argument("run_directory", type=Path)
     finding_confirm.add_argument("path", type=Path)
+    finding_novelty = finding_commands.add_parser(
+        "novelty", help="classify a confirmed finding against a provenance-bearing corpus"
+    )
+    finding_novelty.add_argument("run_directory", type=Path)
+    finding_novelty.add_argument("finding_id")
+    finding_novelty.add_argument("corpus", type=Path)
+
+    baseline = commands.add_parser("baseline", help="run detected build and test baselines")
+    baseline_commands = baseline.add_subparsers(dest="baseline_command", required=True)
+    baseline_run = baseline_commands.add_parser("run")
+    baseline_run.add_argument("run_directory", type=Path)
+    baseline_run.add_argument("request", type=Path)
+    _add_execution_options(baseline_run)
+
+    coverage = commands.add_parser("coverage", help="inspect or update flow × threat coverage")
+    coverage_commands = coverage.add_subparsers(dest="coverage_command", required=True)
+    coverage_list = coverage_commands.add_parser("list")
+    coverage_list.add_argument("run_directory", type=Path)
+    coverage_mark = coverage_commands.add_parser("mark")
+    coverage_mark.add_argument("run_directory", type=Path)
+    coverage_mark.add_argument("task_id")
+    coverage_mark.add_argument("--status", choices=["in_progress", "covered", "blocked"], required=True)
+    coverage_mark.add_argument("--evidence", action="append", default=[])
+    coverage_mark.add_argument("--note", action="append", default=[])
+    coverage_mark.add_argument("--reached-node", action="append", default=[])
 
     ledger = commands.add_parser("ledger", help="verify an evidence ledger")
     ledger_commands = ledger.add_subparsers(dest="ledger_command", required=True)
     ledger_verify = ledger_commands.add_parser("verify")
     ledger_verify.add_argument("path", type=Path)
+    ledger_checkpoint = ledger_commands.add_parser("checkpoint")
+    ledger_checkpoint.add_argument("path", type=Path)
+    ledger_checkpoint.add_argument("--output", type=Path, default=Path("ledger-checkpoint.json"))
+    ledger_verify_checkpoint = ledger_commands.add_parser("verify-checkpoint")
+    ledger_verify_checkpoint.add_argument("path", type=Path)
+    ledger_verify_checkpoint.add_argument("checkpoint", type=Path)
 
     spec = commands.add_parser("spec", help="differential specification workflows")
     spec_commands = spec.add_subparsers(dest="spec_command", required=True)
@@ -96,6 +157,68 @@ def build_parser() -> argparse.ArgumentParser:
         default=ExecutionMode.DENY.value,
     )
     spec_compare.add_argument("--output", type=Path, default=Path("differential-report.json"))
+    spec_compare.add_argument(
+        "--run-directory", type=Path, help="attach mismatches to an audit run as localised hypotheses"
+    )
+    spec_attach = spec_commands.add_parser("attach", help="attach an existing report to a run")
+    spec_attach.add_argument("run_directory", type=Path)
+    spec_attach.add_argument("report", type=Path)
+    spec_classify = spec_commands.add_parser("classify", help="durably classify one mismatch")
+    spec_classify.add_argument("report", type=Path)
+    spec_classify.add_argument("case_id")
+    spec_classify.add_argument("classification", choices=[item.value for item in MismatchClass if item is not MismatchClass.UNCLASSIFIED])
+    spec_classify.add_argument("--rationale", action="append", required=True)
+    spec_classify.add_argument("--output", type=Path, default=Path("differential-triage.json"))
+    spec_classify.add_argument("--run-directory", type=Path)
+    spec_minimize = spec_commands.add_parser("minimize", help="delta-minimize a stable divergent JSON seed")
+    spec_minimize.add_argument("manifest", type=Path)
+    spec_minimize.add_argument("case_id")
+    spec_minimize.add_argument("--max-steps", type=int, default=128)
+    spec_minimize.add_argument("--output", type=Path, default=Path("differential-minimization.json"))
+    _add_execution_options(spec_minimize)
+    spec_feedback = spec_commands.add_parser("feedback", help="create a reviewed spec-and-test feedback proposal")
+    spec_feedback.add_argument("triage", type=Path)
+    spec_feedback.add_argument("minimization", type=Path)
+    spec_feedback.add_argument("--spec-amendment", required=True)
+    spec_feedback.add_argument("--regression-test", required=True)
+    spec_feedback.add_argument("--output", type=Path, default=Path("differential-feedback.json"))
+    spec_feedback.add_argument("--run-directory", type=Path)
+
+    disclose = commands.add_parser("disclose", help="prepare, but never send, a private disclosure packet")
+    disclose_commands = disclose.add_subparsers(dest="disclose_command", required=True)
+    disclose_prepare = disclose_commands.add_parser("prepare")
+    disclose_prepare.add_argument("report", type=Path)
+    disclose_prepare.add_argument("triage", type=Path)
+    disclose_prepare.add_argument("minimization", type=Path)
+    disclose_prepare.add_argument("agent_context", type=Path)
+    disclose_prepare.add_argument("--impact", required=True)
+    disclose_prepare.add_argument("--output", type=Path, default=Path("private-disclosure-packet.json"))
+    disclose_prepare.add_argument("--run-directory", type=Path)
+
+    benchmark = commands.add_parser("benchmark", help="compute contamination-aware security evaluation metrics")
+    benchmark_commands = benchmark.add_subparsers(dest="benchmark_command", required=True)
+    benchmark_evaluate = benchmark_commands.add_parser("evaluate")
+    benchmark_evaluate.add_argument("manifest", type=Path)
+    benchmark_evaluate.add_argument("--output", type=Path, default=Path("benchmark-report.json"))
+
+    deployment = commands.add_parser("deployment", help="verify local source/build bytecode against captured deployed bytecode")
+    deployment_commands = deployment.add_subparsers(dest="deployment_command", required=True)
+    deployment_verify = deployment_commands.add_parser("verify")
+    deployment_verify.add_argument("run_directory", type=Path)
+    deployment_verify.add_argument("attestation", type=Path)
+
+    learning = commands.add_parser("learning", help="review regression and detector-distillation candidates")
+    learning_commands = learning.add_subparsers(dest="learning_command", required=True)
+    learning_review = learning_commands.add_parser("review")
+    learning_review.add_argument("run_directory", type=Path)
+    learning_review.add_argument("review", type=Path)
+
+    variant = commands.add_parser("variant", help="mine provenance-bearing historical issue corpora")
+    variant_commands = variant.add_subparsers(dest="variant_command", required=True)
+    variant_mine = variant_commands.add_parser("mine")
+    variant_mine.add_argument("run_directory", type=Path)
+    variant_mine.add_argument("corpus", type=Path)
+    variant_mine.add_argument("--cutoff", help="exclude corpus entries published after this ISO timestamp")
     return parser
 
 
@@ -114,16 +237,25 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{tool['name']}: {marker}{detail}")
             return 0
         if args.command == "audit":
+            execution_policy = ExecutionPolicy.load(args.policy)
             result = audit(
                 args.target,
                 args.output,
                 IntakePolicy.load(args.policy),
                 args.solc_ast,
+                args.baseline_request,
+                CommandRunner(execution_policy, ExecutionMode(args.execution_mode))
+                if args.baseline_request is not None
+                else None,
             )
             print(result.run_directory)
             print(f"confirmed findings: 0; analyst hypotheses: {len(result.hypotheses)}")
             return 0
         if args.command == "hypothesis":
+            if args.hypothesis_command == "critique":
+                decision = AdjudicationBoard(args.run_directory).submit_critic_decision(args.path)
+                print(decision["status"])
+                return 0
             board = HypothesisBoard(args.run_directory)
             if args.hypothesis_command == "import":
                 imported = board.import_hypothesis(args.path)
@@ -145,21 +277,98 @@ def main(argv: list[str] | None = None) -> int:
             print(evidence_record.evidence_id)
             return 0
         if args.command == "finding":
-            confirmed = HypothesisBoard(args.run_directory).confirm_finding(args.path)
-            print(confirmed.finding_id)
+            if args.finding_command == "confirm":
+                confirmed = HypothesisBoard(args.run_directory).confirm_finding(args.path)
+                print(confirmed.finding_id)
+            else:
+                assessment = AdjudicationBoard(args.run_directory).assess_novelty(
+                    args.finding_id, args.corpus
+                )
+                print(assessment["classification"])
+            return 0
+        if args.command == "baseline":
+            policy = ExecutionPolicy.load(args.policy)
+            runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
+            receipt = run_baseline(args.run_directory, args.request, runner)
+            print(f"build: {receipt.build_status}; tests: {receipt.test_status}")
+            return 0
+        if args.command == "coverage":
+            board = CoverageBoard(args.run_directory)
+            if args.coverage_command == "list":
+                print(json.dumps(board.load().to_dict(), indent=2, sort_keys=True))
+            else:
+                manifest = board.mark(
+                    args.task_id,
+                    args.status,
+                    args.evidence,
+                    args.note,
+                    args.reached_node,
+                )
+                print(f"coverage: {manifest.completeness['flow_threat_tasks']:.1%}")
             return 0
         if args.command == "harness":
             print(json.dumps(snapshot_harness(args.path).to_dict(), indent=2, sort_keys=True))
             return 0
         if args.command == "ledger":
-            count = EvidenceLedger(args.path).verify()
-            print(f"ledger valid: {count} records")
+            ledger = EvidenceLedger(args.path)
+            if args.ledger_command == "verify":
+                count = ledger.verify()
+                print(f"ledger valid: {count} records")
+            elif args.ledger_command == "checkpoint":
+                checkpoint = ledger.export_checkpoint(args.output)
+                print(args.output.resolve())
+                print(f"checkpointed through record {checkpoint['sequence']}")
+            else:
+                sequence = ledger.verify_checkpoint(args.checkpoint)
+                print(f"checkpoint valid through record {sequence}")
             return 0
         if args.command == "spec":
+            if args.spec_command == "attach":
+                hypotheses = attach_report(args.run_directory, args.report)
+                print(f"attached hypotheses: {len(hypotheses)}")
+                return 0
+            if args.spec_command == "classify":
+                triage = classify_mismatch(
+                    args.report,
+                    args.case_id,
+                    MismatchClass(args.classification),
+                    args.rationale,
+                    args.output,
+                    args.run_directory,
+                )
+                print(args.output.resolve())
+                print(triage["classification"])
+                return 0
+            if args.spec_command == "feedback":
+                write_feedback_package(
+                    args.triage,
+                    args.minimization,
+                    args.spec_amendment,
+                    args.regression_test,
+                    args.output,
+                    args.run_directory,
+                )
+                print(args.output.resolve())
+                return 0
             policy = ExecutionPolicy.load(args.policy)
             runner = CommandRunner(policy, ExecutionMode(args.execution_mode))
+            if args.spec_command == "minimize":
+                minimized = minimize_mismatch(
+                    DifferentialManifest.load(args.manifest),
+                    runner,
+                    args.case_id,
+                    args.max_steps,
+                )
+                from .contracts import validate_contract
+
+                validate_contract(minimized, "differential-minimization.schema.json")
+                atomic_write_json(args.output.resolve(), minimized)
+                print(args.output.resolve())
+                return 0
             report = compare(DifferentialManifest.load(args.manifest), runner)
             atomic_write_json(args.output.resolve(), report.to_dict())
+            if args.run_directory is not None:
+                attach_report(args.run_directory, args.output)
             print(args.output.resolve())
             print(
                 f"cases: {report.case_count}; mismatches: {len(report.mismatches)}; "
@@ -167,6 +376,41 @@ def main(argv: list[str] | None = None) -> int:
             )
             for warning in report.warnings:
                 print(f"warning: {warning}", file=sys.stderr)
+            return 0
+        if args.command == "disclose":
+            prepare_disclosure_packet(
+                args.report,
+                args.triage,
+                args.minimization,
+                args.agent_context,
+                args.impact,
+                args.output,
+                args.run_directory,
+            )
+            print(args.output.resolve())
+            print("private packet created; no disclosure was sent")
+            return 0
+        if args.command == "benchmark":
+            report = write_benchmark_report(args.manifest, args.output)
+            print(args.output.resolve())
+            print(
+                f"precision: {report['metrics']['validated_precision']}; "
+                f"recall: {report['metrics']['ground_truth_recall']}"
+            )
+            return 0
+        if args.command == "deployment":
+            report = verify_deployments(args.run_directory, args.attestation)
+            print(f"deployments: {len(report['entries'])}; all match: {report['all_match']}")
+            return 0
+        if args.command == "learning":
+            outcome = review_detector_candidate(args.run_directory, args.review)
+            print(outcome["status"])
+            return 0
+        if args.command == "variant":
+            hypotheses = mine_historical_variants(
+                args.run_directory, args.corpus, args.cutoff
+            )
+            print(f"variant hypotheses: {len(hypotheses)}")
             return 0
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)

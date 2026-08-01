@@ -11,14 +11,16 @@
   ],
   "attacker_prerequisites": [],
   "assumptions": [],
-  "causal_path": [],
+  "causal_path": ["N-REPLACE-WITH-SSG-NODE"],
   "reproducer": "Path or identifier of the minimal reproducer",
   "impact": "Observable security impact",
-  "reproduction_instructions": [],
+  "severity_rationale": "Why the demonstrated impact and prerequisites justify this severity",
+  "reproduction_instructions": ["Replay the bound evidence receipt with the original policy"],
   "remediation": "Root-cause remediation",
   "regression_test": "Test proving the fix",
   "supporting_evidence": ["E-REPLACE-ME"],
   "reproducer_evidence_id": "E-REPLACE-ME",
+  "regression_evidence_id": "E-REPLACE-ME",
   "novelty": "uncertain_novelty",
   "related_issues": []
 }

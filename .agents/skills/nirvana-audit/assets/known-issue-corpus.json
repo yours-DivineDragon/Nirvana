@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "created_at": "REPLACE-WITH-ISO-8601-TIMESTAMP",
+  "issues": [
+    {
+      "issue_id": "ISSUE-REPLACE-ME",
+      "affected_version": "REPLACE-WITH-PINNED-VERSION",
+      "code_identity": "src/Contract.sol",
+      "security_property": "State the violated invariant",
+      "root_cause": "State the causal implementation or design defect",
+      "root_cause_graph": ["authority check", "state transition", "security effect"],
+      "attacker_prerequisites": ["State the required attacker capability"],
+      "exploit_sequence": ["State the minimal causal sequence"],
+      "impact": "State the validated impact",
+      "fix_strategy": "State the root-cause fix",
+      "historical_lineage": [],
+      "status": "fixed",
+      "provenance": "REPLACE-WITH-PRIMARY-SOURCE-URL-OR-ARCHIVE-ID",
+      "published_at": "REPLACE-WITH-ISO-8601-TIMESTAMP"
+    }
+  ]
+}
