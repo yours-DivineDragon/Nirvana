@@ -122,7 +122,7 @@ def refresh_report(run_directory: Path) -> None:
         }
     )
     summary: dict[str, Any] = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "run_id": resolved.name,
         "target": scope.target_root,
         "commit": scope.repository_commit,

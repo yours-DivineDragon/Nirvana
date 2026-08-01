@@ -56,7 +56,7 @@ def doctor_report() -> dict[str, Any]:
     statuses = inspect_tools()
     available = {item.name for item in statuses if item.available}
     return {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "tools": jsonable(statuses),
         "capabilities": {
             "intake": True,
@@ -64,7 +64,7 @@ def doctor_report() -> dict[str, Any]:
             "runtime_schema_validation": True,
             "deterministic_evm_candidates": True,
             "solc_ast_frontend": True,
-            "structural_artifact_corroboration": True,
+            "runner_verified_structural_corroboration": True,
             "sandboxed_execution": "docker" in available,
             # Conservative host probe only. A pinned image may contain Forge even
             # when the host does not; that image still needs an actual test run.

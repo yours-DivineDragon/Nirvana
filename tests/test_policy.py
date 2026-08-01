@@ -65,8 +65,37 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("65532:65532", command)
             self.assertTrue(any(item.startswith("--tmpfs=/work:rw,exec") for item in command))
             self.assertIn("FOUNDRY_OUT=/work/foundry-out", command)
+            self.assertIn("PYTEST_ADDOPTS=-p no:cacheprovider", command)
+            self.assertTrue(
+                any(item.startswith("--tmpfs=/workspace/artifacts:rw") for item in command)
+            )
             mount = command[command.index("--mount") + 1]
             self.assertTrue(mount.endswith(",readonly"))
+
+    def test_docker_mounts_auditor_harness_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as harness_directory, patch(
+            "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
+        ), patch("nirvana.policy.subprocess.run") as run:
+            harness = Path(harness_directory)
+            (harness / "test.py").write_text("assert True\n")
+            run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
+            result = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            ).run(["pytest", "/harness/test.py"], Path(directory), b"", harness)
+
+            self.assertEqual(result.return_code, 0)
+            command = run.call_args.args[0]
+            mounts = [
+                command[index + 1]
+                for index, item in enumerate(command[:-1])
+                if item == "--mount"
+            ]
+            self.assertEqual(len(mounts), 2)
+            self.assertIn(
+                f"type=bind,src={harness.resolve()},dst=/harness,readonly",
+                mounts,
+            )
 
 
 if __name__ == "__main__":

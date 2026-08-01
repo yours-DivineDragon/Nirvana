@@ -121,7 +121,7 @@ class DifferentialManifest:
                     language=language,
                     sources=sources,
                     producer=producer,
-            model=model,
+                    model=model,
                     prompt_sha256=prompt_sha256,
                     tool_version=tool_version,
                     source_sha256=source_sha256,
@@ -162,6 +162,7 @@ class DifferentialReport:
     corpus_sha256: str
     implementations: list[dict[str, Any]]
     corpus_case_count: int
+    requested_fuzz_case_count: int
     fuzz_case_count: int
     case_count: int
     repetitions: int
@@ -169,6 +170,7 @@ class DifferentialReport:
     mismatches: list[DifferentialMismatch]
     blocked_executions: int
     flaky_executions: int
+    warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         value = jsonable(self)
@@ -179,6 +181,13 @@ class DifferentialReport:
 def compare(manifest: DifferentialManifest, runner: CommandRunner) -> DifferentialReport:
     corpus_cases = _load_cases(manifest.corpus)
     fuzzed = _fuzz_cases(corpus_cases, manifest.fuzz_cases, manifest.fuzz_seed)
+    warnings: list[str] = []
+    if len(fuzzed) < manifest.fuzz_cases:
+        warnings.append(
+            "generated "
+            f"{len(fuzzed)} of {manifest.fuzz_cases} requested fuzz cases; "
+            "the deterministic mutation space was exhausted"
+        )
     cases = corpus_cases + fuzzed
     mismatches: list[DifferentialMismatch] = []
     blocked = 0
@@ -243,12 +252,13 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                 )
             )
     return DifferentialReport(
-        schema_version="1.1.0",
+        schema_version="1.2.0",
         created_at=utc_now(),
         spec_sha256=sha256_file(manifest.spec),
         corpus_sha256=sha256_file(manifest.corpus),
         implementations=[item.provenance(manifest.root) for item in manifest.implementations],
         corpus_case_count=len(corpus_cases),
+        requested_fuzz_case_count=manifest.fuzz_cases,
         fuzz_case_count=len(fuzzed),
         case_count=len(cases),
         repetitions=manifest.repetitions,
@@ -256,6 +266,7 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
         mismatches=mismatches,
         blocked_executions=blocked,
         flaky_executions=flaky,
+        warnings=warnings,
     )
 
 

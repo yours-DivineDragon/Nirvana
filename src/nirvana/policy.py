@@ -38,6 +38,7 @@ class ExecutionPolicy:
             "FOUNDRY_OUT": "/work/foundry-out",
             "FOUNDRY_CACHE_PATH": "/work/foundry-cache",
             "CARGO_TARGET_DIR": "/work/cargo-target",
+            "PYTEST_ADDOPTS": "-p no:cacheprovider",
             "NO_COLOR": "1",
         }
     )
@@ -78,6 +79,7 @@ class ExecutionPolicy:
                 "FOUNDRY_OUT": "/work/foundry-out",
                 "FOUNDRY_CACHE_PATH": "/work/foundry-cache",
                 "CARGO_TARGET_DIR": "/work/cargo-target",
+                "PYTEST_ADDOPTS": "-p no:cacheprovider",
                 "NO_COLOR": "1",
             },
         )
@@ -123,16 +125,36 @@ class CommandRunner:
         self.policy = policy
         self.mode = mode
 
-    def run(self, command: list[str], cwd: Path, stdin: bytes = b"") -> CommandResult:
+    def run(
+        self,
+        command: list[str],
+        cwd: Path,
+        stdin: bytes = b"",
+        harness_directory: Path | None = None,
+    ) -> CommandResult:
         if not command or any(not isinstance(part, str) or "\x00" in part for part in command):
             raise ValueError("command must be a non-empty list of safe strings")
         resolved_cwd = cwd.resolve(strict=True)
+        resolved_harness = None
+        if harness_directory is not None:
+            resolved_harness = harness_directory.resolve(strict=True)
+            if not resolved_harness.is_dir():
+                raise ValueError("execution harness is not a directory")
         if self.mode is ExecutionMode.DENY:
             return CommandResult(command, None, b"", b"", 0, "execution is denied by default")
         blocked_reason = self._blocked_capability(command)
         if blocked_reason:
             return CommandResult(command, None, b"", b"", 0, blocked_reason)
         if self.mode is ExecutionMode.HOST:
+            if resolved_harness is not None:
+                return CommandResult(
+                    command,
+                    None,
+                    b"",
+                    b"",
+                    0,
+                    "auditor harness overlays require Docker execution",
+                )
             if not self.policy.allow_host_execution:
                 return CommandResult(command, None, b"", b"", 0, "host execution is not allowed by policy")
             if not self.policy.allow_network:
@@ -145,7 +167,7 @@ class CommandRunner:
                     "host mode cannot enforce network isolation; use Docker or explicitly accept host networking",
                 )
             return self._run_host(command, resolved_cwd, stdin)
-        return self._run_docker(command, resolved_cwd, stdin)
+        return self._run_docker(command, resolved_cwd, stdin, resolved_harness)
 
     def _safe_environment(self) -> dict[str, str]:
         sensitive = re.compile(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH|PRIVATE|API[_-]?KEY", re.I)
@@ -244,7 +266,13 @@ class CommandRunner:
                 timed_out=True,
             )
 
-    def _run_docker(self, command: list[str], cwd: Path, stdin: bytes) -> CommandResult:
+    def _run_docker(
+        self,
+        command: list[str],
+        cwd: Path,
+        stdin: bytes,
+        harness_directory: Path | None,
+    ) -> CommandResult:
         docker = shutil.which("docker")
         if docker is None:
             return CommandResult(command, None, b"", b"", 0, "docker is unavailable")
@@ -252,6 +280,17 @@ class CommandRunner:
             return CommandResult(command, None, b"", b"", 0, "policy does not select a pinned docker image")
         if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", self.policy.docker_image):
             return CommandResult(command, None, b"", b"", 0, "docker image must be pinned by SHA-256 digest")
+        if "," in str(cwd) or (
+            harness_directory is not None and "," in str(harness_directory)
+        ):
+            return CommandResult(
+                command,
+                None,
+                b"",
+                b"",
+                0,
+                "Docker bind source paths must not contain commas",
+            )
         network = "bridge" if self.policy.allow_network else "none"
         sensitive = re.compile(r"TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH|PRIVATE|API[_-]?KEY", re.I)
         container_environment = dict(self.policy.container_environment)
@@ -286,10 +325,22 @@ class CommandRunner:
             "--memory=2g",
             "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             f"--tmpfs=/work:rw,exec,nosuid,nodev,size={self.policy.docker_work_bytes},mode=1777",
+            "--tmpfs=/workspace/.anchor:rw,noexec,nosuid,nodev,size=64m,mode=1777",
+            "--tmpfs=/workspace/.pytest_cache:rw,noexec,nosuid,nodev,size=64m,mode=1777",
+            "--tmpfs=/workspace/artifacts:rw,noexec,nosuid,nodev,size=256m,mode=1777",
+            "--tmpfs=/workspace/broadcast:rw,noexec,nosuid,nodev,size=64m,mode=1777",
+            "--tmpfs=/workspace/cache:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             "--mount",
             f"type=bind,src={cwd},dst=/workspace,readonly",
             "--workdir=/workspace",
         ]
+        if harness_directory is not None:
+            docker_command.extend(
+                [
+                    "--mount",
+                    f"type=bind,src={harness_directory},dst=/harness,readonly",
+                ]
+            )
         for key in sorted(container_environment):
             docker_command.extend(["--env", f"{key}={container_environment[key]}"])
         docker_command.extend([self.policy.docker_image, *command])

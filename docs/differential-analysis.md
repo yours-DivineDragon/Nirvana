@@ -28,7 +28,7 @@ Produce implementations in isolated workspaces. Prevent them from reading one an
 
 Agreement raises confidence but never establishes correctness. The final class requires design review, adversarial invariants, or formalization rather than more differential voting.
 
-The manifest's `[analysis]` table controls deterministic repeated runs and seeded JSON mutations. `repetitions` is at least two so the report can flag per-implementation flakes. `fuzz_cases` extends, but never replaces, the canonical JSONL corpus. Every generated case has a stable ID derived from its canonical input and `fuzz_seed`.
+The manifest's `[analysis]` table controls deterministic repeated runs and seeded JSON mutations. `repetitions` is at least two so the report can flag per-implementation flakes. `fuzz_cases` extends, but never replaces, the canonical JSONL corpus. Every generated case has a stable ID derived from its canonical input and `fuzz_seed`. Reports record both requested and generated fuzz counts and emit a warning when the finite mutation space cannot satisfy the requested budget.
 
 ## Execution boundary
 

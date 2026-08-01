@@ -3,8 +3,9 @@
 # is stream-hashed regardless of size.
 max_file_bytes = 5000000
 
-# Defaults such as .git, out, cache, build, target, and node_modules are always
-# retained. Add target-specific generated directories here.
+# Defaults such as .git, .pytest_cache, out, cache, artifacts, broadcast,
+# build, target, and node_modules are always retained. Add target-specific
+# generated directories here.
 excluded_directories = ["generated-artifacts"]
 
 [execution]
@@ -34,4 +35,5 @@ XDG_CACHE_HOME = "/work/cache"
 FOUNDRY_OUT = "/work/foundry-out"
 FOUNDRY_CACHE_PATH = "/work/foundry-cache"
 CARGO_TARGET_DIR = "/work/cargo-target"
+PYTEST_ADDOPTS = "-p no:cacheprovider"
 NO_COLOR = "1"

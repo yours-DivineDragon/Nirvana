@@ -5,11 +5,12 @@
   "type": "object",
   "required": [
     "schema_version", "created_at", "spec_sha256", "corpus_sha256",
-    "implementations", "corpus_case_count", "fuzz_case_count", "case_count",
-    "repetitions", "fuzz_seed", "mismatches", "blocked_executions", "flaky_executions"
+    "implementations", "corpus_case_count", "requested_fuzz_case_count",
+    "fuzz_case_count", "case_count", "repetitions", "fuzz_seed", "mismatches",
+    "blocked_executions", "flaky_executions", "warnings"
   ],
   "properties": {
-    "schema_version": {"const": "1.1.0"},
+    "schema_version": {"const": "1.2.0"},
     "created_at": {"type": "string"},
     "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "corpus_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -35,12 +36,14 @@
       }
     },
     "corpus_case_count": {"type": "integer", "minimum": 0},
+    "requested_fuzz_case_count": {"type": "integer", "minimum": 0},
     "fuzz_case_count": {"type": "integer", "minimum": 0},
     "case_count": {"type": "integer", "minimum": 0},
     "repetitions": {"type": "integer", "minimum": 2},
     "fuzz_seed": {"type": "integer"},
     "blocked_executions": {"type": "integer", "minimum": 0},
     "flaky_executions": {"type": "integer", "minimum": 0},
+    "warnings": {"type": "array", "items": {"type": "string"}},
     "mismatches": {
       "type": "array",
       "items": {

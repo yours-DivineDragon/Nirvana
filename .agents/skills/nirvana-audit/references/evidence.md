@@ -19,10 +19,12 @@
 - Fork evidence proves behavior at one pinned state and configuration, not every deployment.
 - Economic evidence states liquidity, capital, ordering, oracle, fee, and governance assumptions.
 - Store contradicting evidence and rejection reasons alongside supporting evidence.
-- Imported evidence records cannot claim `executable` or stronger. Nirvana must run the reviewed adapter command, capture the bounded output, checked assertions, claim, and target snapshot in a hashed receipt, and replay that receipt under the same policy before it can support confirmation.
-- Two imported structural analyzer artifacts may be explicitly corroborated only when their adapters, versions, artifact hashes, target snapshot, and hypothesis claim are independently bound. This tier cannot support high or critical severity.
-- A process exit alone is never proof. The request must declare checked predicates for the specific verifier decision. Assertion replay may ignore irrelevant output noise; strict replay additionally compares raw hashes.
-- Every finding lists its supporting evidence IDs. Executable findings bind a replay-verified reproducer ID, and evidence from another hypothesis or claim is rejected.
+- Imported evidence records are capped at `localised`. Nirvana must run and replay every structural or executable adapter before it can affect a reporting ceiling.
+- Structural confirmation requires two distinct runner-minted and replay-verified solc-AST, Slither, or Semgrep receipts bound to the same snapshot and claim. This tier cannot support high or critical severity.
+- A process exit alone is never proof. The request must declare bounded fixed-string or JSON predicates for the specific verifier decision. Unbounded regular-expression assertions are not supported.
+- Executable evidence requires a separate patched-target negative control with an exact declared file delta. Nirvana runs the same command and predicates against both targets; a PoC that passes against both is rejected.
+- Auditor-owned harnesses remain outside the target, contain no symlinks, are mounted read-only, and are hash-bound into mint and replay receipts.
+- Every finding lists its supporting evidence IDs. Executable findings bind a negative-control-verified reproducer ID, and evidence from another hypothesis or claim is rejected.
 
 ## Finding gate
 

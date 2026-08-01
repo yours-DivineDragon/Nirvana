@@ -88,6 +88,16 @@ class IntakeAndEvmTests(unittest.TestCase):
             self.assertEqual(policy.max_file_bytes, 12345)
             self.assertIn("vendor-generated", policy.excluded_directories)
             self.assertIn(".git", policy.excluded_directories)
+            self.assertTrue(
+                {
+                    ".anchor",
+                    ".pytest_cache",
+                    "artifacts",
+                    "broadcast",
+                    "cache",
+                }
+                <= policy.excluded_directories
+            )
 
     def test_solc_ast_scanner_emits_contextual_security_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

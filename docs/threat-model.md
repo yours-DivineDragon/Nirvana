@@ -19,7 +19,7 @@ Nirvana assumes the audit target is controlled by an adversary attempting to inf
 | Generated command injection | Argument arrays and `shell=False` |
 | Live-chain harm | No production RPC credentials, signing, or broadcasts |
 | Irrelevant command unlocks a finding | Adapter/argv contract, checked claim predicates, explicit supporting evidence IDs, and hypothesis binding |
-| False high-severity report | Runner-minted receipt, assertion replay, executable ceiling, and adversarial review |
+| False high-severity report | Paired target/control receipts, assertion replay, executable ceiling, and adversarial review |
 | Precision collapse | Devil's Advocate validation and semantic deduplication |
 | Recall collapse | Rescue Critic and preserved rejection reasons |
 | Benchmark contamination | Separate training, retrieval, and evaluation corpora |
@@ -27,9 +27,9 @@ Nirvana assumes the audit target is controlled by an adversary attempting to inf
 
 ## Trust boundaries
 
-The Nirvana source, local policy, runtime-validated schemas, and analyst-approved base specification are trusted. Audit targets, generated implementations, retrieved content, external tools, and their output are untrusted. Intake never launches target-configured Git. A verifier result becomes executable evidence only inside a digest-pinned Docker sandbox, after Nirvana captures its exact adapter, claim, assertions, command, policy, target snapshot, bounded output, artifact hash, and successful replay.
+The Nirvana source, local policy, runtime-validated schemas, and analyst-approved base specification are trusted. Audit targets, generated implementations, retrieved content, external tools, and their output are untrusted. Intake never launches target-configured Git. A verifier result becomes executable evidence only inside a digest-pinned Docker sandbox, after Nirvana captures its exact adapter, claim, assertions, command, policy, target snapshot, patched-control delta and decision, optional auditor-harness hash, bounded output, artifact hash, and successful replay.
 
-The Docker target mount is read-only. A non-root numeric user runs with no capabilities, no privilege escalation, no network by default, a no-exec `/tmp`, and an executable disposable `/work` area for Foundry/Cargo outputs and caches. Only allowlisted non-secret environment values cross the boundary.
+The Docker target, patched control, and optional `/harness` mounts are read-only. A non-root numeric user runs with no capabilities, no privilege escalation, no network by default, a no-exec `/tmp`, an executable disposable `/work` area for compiler outputs, and bounded writable generated-output mounts. Only allowlisted non-secret environment values cross the boundary.
 
 ## Known foundation limitations
 

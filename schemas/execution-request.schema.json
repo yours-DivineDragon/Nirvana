@@ -36,13 +36,14 @@
     "assertions": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 16,
       "items": {
         "type": "object",
         "required": ["assertion_id", "source", "operator", "value"],
         "properties": {
           "assertion_id": {"type": "string", "pattern": "^A-[A-Za-z0-9._-]+$"},
           "source": {"enum": ["stdout", "stderr"]},
-          "operator": {"enum": ["contains", "regex", "json_pointer_equals"]},
+          "operator": {"enum": ["contains", "json_pointer_equals"]},
           "value": {},
           "pointer": {"type": ["string", "null"]}
         },
@@ -64,7 +65,34 @@
     },
     "replay_mode": {"enum": ["assertions", "strict"]},
     "tool_version": {"type": "string", "minLength": 1},
-    "assumptions": {"type": "array", "items": {"type": "string"}}
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "harness": {
+      "type": ["object", "null"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "negative_control": {
+      "type": ["object", "null"],
+      "properties": {
+        "target_root": {"type": "string", "minLength": 1},
+        "changed_files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "expected_return_codes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"type": "integer", "minimum": 0, "maximum": 255}
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

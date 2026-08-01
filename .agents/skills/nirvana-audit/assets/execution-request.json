@@ -13,15 +13,23 @@
     {
       "assertion_id": "A-REPRODUCER-PASSED",
       "source": "stdout",
-      "operator": "regex",
-      "value": "(?m)^\\[PASS\\] test_Reproducer"
+      "operator": "contains",
+      "value": "[PASS] test_Reproducer"
     }
   ],
-  "command": ["forge", "test", "--match-test", "test_Reproducer", "-vvv"],
+  "command": ["forge", "test", "--root", "/harness", "--match-test", "test_Reproducer", "-vvv"],
   "cwd": ".",
   "stdin": "",
   "expected_return_codes": [0],
   "replay_mode": "assertions",
   "tool_version": "forge REPLACE-WITH-VERSION",
-  "assumptions": []
+  "assumptions": [],
+  "harness": {
+    "path": "/absolute/path/to/auditor-owned-harness"
+  },
+  "negative_control": {
+    "target_root": "/absolute/path/to/patched-target-copy",
+    "changed_files": ["src/Contract.sol"],
+    "expected_return_codes": [1]
+  }
 }

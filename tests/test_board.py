@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from nirvana.workflow import audit
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evm"
+CONTROL_FIXTURE = Path(__file__).parent / "fixtures" / "evm-control"
 
 
 class BoardTests(unittest.TestCase):
@@ -28,8 +30,11 @@ class BoardTests(unittest.TestCase):
         replay_mode: str = "assertions",
         evidence_level: str = "executable",
         adapter: str = "pytest",
+        control_root: Path = CONTROL_FIXTURE,
+        control_changed_files: list[str] | None = None,
+        control_expected_return_code: int = 0,
     ) -> dict:
-        return {
+        request = {
             "evidence_id": evidence_id,
             "hypothesis_id": hypothesis.hypothesis_id,
             "evidence_level": evidence_level,
@@ -44,7 +49,7 @@ class BoardTests(unittest.TestCase):
                 {
                     "assertion_id": "A-VIOLATION",
                     "source": "stdout",
-                    "operator": "regex",
+                    "operator": "contains",
                     "value": assertion_value,
                 }
             ],
@@ -53,6 +58,13 @@ class BoardTests(unittest.TestCase):
             "replay_mode": replay_mode,
             "tool_version": "fixture-1",
         }
+        if evidence_level == "executable":
+            request["negative_control"] = {
+                "target_root": str(control_root.resolve()),
+                "changed_files": control_changed_files or ["src/Vault.sol"],
+                "expected_return_codes": [control_expected_return_code],
+            }
+        return request
 
     def test_import_evidence_and_enforce_finding_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -200,8 +212,11 @@ class BoardTests(unittest.TestCase):
             policy = ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64)
             runner = CommandRunner(policy, ExecutionMode.DOCKER)
             observed = CommandResult(command, 1, b"counterexample\n", b"", 4)
+            control = CommandResult(command, 0, b"patched behavior\n", b"", 2)
             board = HypothesisBoard(result.run_directory)
-            with patch.object(runner, "run", return_value=observed) as run:
+            with patch.object(
+                runner, "run", side_effect=[observed, control, observed, control]
+            ) as run:
                 evidence = board.execute_evidence(request_path, runner)
                 self.assertEqual(evidence.source, "nirvana:command-runner")
                 self.assertTrue(evidence.metadata["runner_minted"])
@@ -237,7 +252,7 @@ class BoardTests(unittest.TestCase):
                 board.verify_evidence(evidence.evidence_id, runner)
                 board.confirm_finding(finding_path)
 
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 4)
             report = json.loads((result.run_directory / "report.json").read_text())
             self.assertEqual([item["finding_id"] for item in report["confirmed_findings"]], ["F-POC"])
             self.assertEqual(report["evidence_ceiling"], "executable")
@@ -256,7 +271,7 @@ class BoardTests(unittest.TestCase):
                         hypothesis,
                         "E-UNSTABLE",
                         command,
-                        "first|second",
+                        "first",
                         replay_mode="strict",
                     )
                 )
@@ -268,13 +283,141 @@ class BoardTests(unittest.TestCase):
             board = HypothesisBoard(result.run_directory)
             first = CommandResult(command, 0, b"first\n", b"", 1)
             second = CommandResult(command, 0, b"second\n", b"", 1)
-            with patch.object(runner, "run", side_effect=[first, second]):
+            control = CommandResult(command, 0, b"patched\n", b"", 1)
+            with patch.object(
+                runner, "run", side_effect=[first, control, second, control]
+            ):
                 board.execute_evidence(request_path, runner)
                 with self.assertRaisesRegex(ValueError, "verification contract"):
                     board.verify_evidence("E-UNSTABLE", runner)
 
             scope = json.loads((result.run_directory / "scope.json").read_text())
             self.assertEqual(scope["evidence_ceiling"], "localised")
+
+    def test_negative_control_must_produce_the_opposite_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = audit(FIXTURE, root / "runs")
+            hypothesis = result.hypotheses[0]
+            request_path = root / "request.json"
+            request_path.write_text(
+                json.dumps(
+                    self.execution_request(
+                        hypothesis, "E-NO-CONTROL", ["pytest"], "violation"
+                    )
+                )
+            )
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            same_result = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
+            with patch.object(
+                runner, "run", side_effect=[same_result, same_result]
+            ):
+                with self.assertRaisesRegex(ValueError, "opposite verifier decision"):
+                    HypothesisBoard(result.run_directory).execute_evidence(
+                        request_path, runner
+                    )
+
+    def test_negative_control_delta_must_be_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = audit(FIXTURE, root / "runs")
+            request = self.execution_request(
+                result.hypotheses[0], "E-WRONG-DELTA", ["pytest"], "violation"
+            )
+            request["negative_control"]["changed_files"] = ["foundry.toml"]
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request))
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            with patch.object(runner, "run") as run:
+                with self.assertRaisesRegex(ValueError, "do not exactly match"):
+                    HypothesisBoard(result.run_directory).execute_evidence(
+                        request_path, runner
+                    )
+                run.assert_not_called()
+
+    def test_negative_control_must_replay_the_same_assertion_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = audit(FIXTURE, root / "runs")
+            request = self.execution_request(
+                result.hypotheses[0], "E-CONTROL-FLAKE", ["pytest"], "violation"
+            )
+            request["assertions"].append(
+                {
+                    "assertion_id": "A-STABLE",
+                    "source": "stdout",
+                    "operator": "contains",
+                    "value": "stable",
+                }
+            )
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request))
+            command = ["pytest"]
+            positive = CommandResult(command, 0, b"violation stable\n", b"", 1)
+            first_control = CommandResult(command, 0, b"stable\n", b"", 1)
+            second_control = CommandResult(command, 0, b"violation\n", b"", 1)
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            board = HypothesisBoard(result.run_directory)
+            with patch.object(
+                runner,
+                "run",
+                side_effect=[positive, first_control, positive, second_control],
+            ):
+                board.execute_evidence(request_path, runner)
+                with self.assertRaisesRegex(ValueError, "verification contract"):
+                    board.verify_evidence("E-CONTROL-FLAKE", runner)
+
+    def test_harness_overlay_is_hash_bound_and_replayed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            harness = root / "harness"
+            harness.mkdir()
+            harness_file = harness / "test_repro.py"
+            harness_file.write_text("def test_repro():\n    assert True\n")
+            result = audit(FIXTURE, root / "runs")
+            request = self.execution_request(
+                result.hypotheses[0], "E-HARNESS", ["pytest"], "violation"
+            )
+            request["harness"] = {"path": str(harness.resolve())}
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request))
+            runner = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            )
+            positive = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
+            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
+            board = HypothesisBoard(result.run_directory)
+            with patch.object(
+                runner,
+                "run",
+                side_effect=[positive, control, positive, control],
+            ) as run:
+                evidence = board.execute_evidence(request_path, runner)
+                board.verify_evidence(evidence.evidence_id, runner)
+
+            self.assertEqual(run.call_count, 4)
+            self.assertTrue(
+                all(call.args[3] == harness.resolve() for call in run.call_args_list)
+            )
+            receipt = json.loads(Path(evidence.artifact_path).read_text())
+            self.assertEqual(receipt["harness"]["file_count"], 1)
+            self.assertIsNotNone(receipt["negative_control"])
+
+            harness_file.write_text("def test_repro():\n    assert False\n")
+            with patch.object(runner, "run") as replay:
+                with self.assertRaisesRegex(ValueError, "different auditor harness"):
+                    board.verify_evidence(evidence.evidence_id, runner)
+                replay.assert_not_called()
 
     def test_denied_execution_cannot_mint_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -356,8 +499,11 @@ class BoardTests(unittest.TestCase):
                 ExecutionMode.DOCKER,
             )
             observed = CommandResult(command, 0, b"stable\n", b"", 1)
+            control = CommandResult(command, 0, b"patched\n", b"", 1)
             board = HypothesisBoard(result.run_directory)
-            with patch.object(original_runner, "run", return_value=observed):
+            with patch.object(
+                original_runner, "run", side_effect=[observed, control]
+            ):
                 board.execute_evidence(request_path, original_runner)
 
             changed_runner = CommandRunner(
@@ -418,7 +564,7 @@ class BoardTests(unittest.TestCase):
                 hypothesis,
                 "E-NOISY",
                 command,
-                r"(?m)^\[PASS\] testExploit",
+                "[PASS] testExploit",
                 adapter="forge-test",
             )
             request_path = root / "request.json"
@@ -433,8 +579,11 @@ class BoardTests(unittest.TestCase):
             second = CommandResult(
                 command, 0, b"[PASS] testExploit (gas: 12009)\nfinished in 7.89ms\n", b"", 9
             )
+            control = CommandResult(command, 0, b"[FAIL] patched target\n", b"", 3)
             board = HypothesisBoard(result.run_directory)
-            with patch.object(runner, "run", side_effect=[first, second]):
+            with patch.object(
+                runner, "run", side_effect=[first, control, second, control]
+            ):
                 board.execute_evidence(request_path, runner)
                 board.verify_evidence("E-NOISY", runner)
 
@@ -477,8 +626,11 @@ class BoardTests(unittest.TestCase):
                 ExecutionMode.DOCKER,
             )
             observed = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
+            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
             board = HypothesisBoard(result.run_directory)
-            with patch.object(runner, "run", return_value=observed):
+            with patch.object(
+                runner, "run", side_effect=[observed, control, observed, control]
+            ):
                 board.execute_evidence(request_path, runner)
                 board.verify_evidence("E-BOUND", runner)
 
@@ -529,8 +681,20 @@ class BoardTests(unittest.TestCase):
             )
             passing = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
             failing = CommandResult(["pytest"], 0, b"no decision\n", b"", 1)
+            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
             board = HypothesisBoard(result.run_directory)
-            with patch.object(runner, "run", side_effect=[passing, passing, failing]):
+            with patch.object(
+                runner,
+                "run",
+                side_effect=[
+                    passing,
+                    control,
+                    passing,
+                    control,
+                    failing,
+                    control,
+                ],
+            ):
                 board.execute_evidence(request_path, runner)
                 board.verify_evidence("E-FLAKY", runner)
                 with self.assertRaisesRegex(ValueError, "verification contract"):
@@ -632,7 +796,7 @@ class BoardTests(unittest.TestCase):
             )
             board.confirm_finding(finding_path)
 
-    def test_static_artifacts_can_raise_structural_ceiling_without_execution(self) -> None:
+    def test_imported_structural_artifacts_cannot_raise_the_ceiling(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result = audit(FIXTURE, root / "runs")
@@ -642,36 +806,34 @@ class BoardTests(unittest.TestCase):
                 "suspected_violation": hypothesis.suspected_violation,
             }
             board = HypothesisBoard(result.run_directory)
-            for evidence_id, adapter in (("E-AST", "solc-ast"), ("E-STATIC", "slither")):
-                artifact = root / f"{evidence_id}.json"
-                artifact.write_text(json.dumps({"adapter": adapter, "path": ["entry", "effect"]}))
-                evidence_path = root / f"{evidence_id}-record.json"
-                evidence_path.write_text(
-                    json.dumps(
-                        {
-                            "evidence_id": evidence_id,
-                            "hypothesis_id": hypothesis.hypothesis_id,
-                            "level": "structurally_confirmed",
-                            "kind": "static_path",
-                            "summary": f"{adapter} resolves the unsafe path",
-                            "source": f"deterministic:{adapter}",
-                            "artifact_path": str(artifact),
-                            "artifact_sha256": sha256_file(artifact),
-                            "tool_version": f"{adapter}-1",
-                            "metadata": {
-                                "adapter": adapter,
-                                "target_snapshot_sha256": result.scope.target_snapshot_sha256,
-                                "claim": claim,
-                            },
-                        }
-                    )
-                )
-                board.import_evidence(evidence_path)
-
-            board.corroborate_evidence(
-                hypothesis.hypothesis_id, ["E-AST", "E-STATIC"]
+            artifact = root / "fake.json"
+            artifact.write_text(
+                json.dumps({"totally": "handwritten, no analyzer ever ran"})
             )
-            self.assertEqual(board._load_scope().evidence_ceiling.value, "structurally_confirmed")
+            evidence_path = root / "fake-record.json"
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "evidence_id": "E-FAKE-AST",
+                        "hypothesis_id": hypothesis.hypothesis_id,
+                        "level": "structurally_confirmed",
+                        "kind": "static_path",
+                        "summary": "fabricated structural path",
+                        "source": "deterministic:solc-ast",
+                        "artifact_path": str(artifact),
+                        "artifact_sha256": sha256_file(artifact),
+                        "tool_version": "fabricated-1",
+                        "metadata": {
+                            "adapter": "solc-ast",
+                            "target_snapshot_sha256": result.scope.target_snapshot_sha256,
+                            "claim": claim,
+                        },
+                    }
+                )
+            )
+            with self.assertRaisesRegex(ValueError, "structural and stronger"):
+                board.import_evidence(evidence_path)
+            self.assertEqual(board._load_scope().evidence_ceiling.value, "localised")
 
     def test_ledger_first_ceiling_update_recovers_a_stale_scope(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -692,8 +854,11 @@ class BoardTests(unittest.TestCase):
                 ExecutionMode.DOCKER,
             )
             observed = CommandResult(command, 0, b"violation\n", b"", 1)
+            control = CommandResult(command, 0, b"patched\n", b"", 1)
             board = HypothesisBoard(result.run_directory)
-            with patch.object(runner, "run", return_value=observed):
+            with patch.object(
+                runner, "run", side_effect=[observed, control, observed, control]
+            ):
                 board.execute_evidence(request_path, runner)
 
                 def fail_scope_only(path, value):
@@ -723,6 +888,11 @@ class BoardTests(unittest.TestCase):
             long_suffix = "x" * 180
             for index in range(4_000):
                 (target / f"f{index:04d}-{long_suffix}.txt").write_text("")
+            control_target = root / "control"
+            shutil.copytree(target, control_target)
+            (control_target / "Vault.sol").write_text(
+                "contract Vault { address owner; function f() external view returns(bool) { return msg.sender == owner; } }\n"
+            )
             result = audit(target, root / "runs")
             self.assertGreater((result.run_directory / "scope.json").stat().st_size, 1_000_000)
 
@@ -730,7 +900,12 @@ class BoardTests(unittest.TestCase):
             request_path.write_text(
                 json.dumps(
                     self.execution_request(
-                        result.hypotheses[0], "E-LARGE", ["pytest"], "violation"
+                        result.hypotheses[0],
+                        "E-LARGE",
+                        ["pytest"],
+                        "violation",
+                        control_root=control_target,
+                        control_changed_files=["Vault.sol"],
                     )
                 )
             )
@@ -738,11 +913,9 @@ class BoardTests(unittest.TestCase):
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
                 ExecutionMode.DOCKER,
             )
-            with patch.object(
-                runner,
-                "run",
-                return_value=CommandResult(["pytest"], 0, b"violation\n", b"", 1),
-            ):
+            observed = CommandResult(["pytest"], 0, b"violation\n", b"", 1)
+            control = CommandResult(["pytest"], 0, b"patched\n", b"", 1)
+            with patch.object(runner, "run", side_effect=[observed, control]):
                 evidence = HypothesisBoard(result.run_directory).execute_evidence(
                     request_path, runner
                 )
