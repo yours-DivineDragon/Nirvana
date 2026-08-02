@@ -59,7 +59,7 @@ The feedback artifact is a proposal. Nirvana never changes the specification or 
 
 ## Audit-pipeline integration
 
-`nirvana spec compare ... --run-directory <run>` or `nirvana spec attach` copies a valid report into the audit run, hashes it into the ledger, and emits one `H-DIFF-*` hypothesis plus localised evidence per mismatch. Repeating the same attachment returns the existing hypotheses without appending duplicate ledger events. The hypothesis explicitly retains comparator correctness, implementation independence, specification intent, and security impact as unresolved assumptions. A differential report cannot raise the evidence ceiling.
+`nirvana spec compare ... --run-directory <run>` copies its runner-produced in-memory result into the audit run, verifies that the serialized output still has the expected hash, and emits one `H-DIFF-*` hypothesis plus localised evidence per mismatch. There is intentionally no standalone attachment command: detached JSON has no execution provenance and cannot originate audit hypotheses. Repeating the attachment of the same in-process result returns the existing hypotheses without appending duplicate ledger events. The ledger event records `attachment_source: in_process_spec_compare`. The hypothesis explicitly retains comparator correctness, implementation independence, specification intent, and security impact as unresolved assumptions. A differential report cannot raise the evidence ceiling.
 
 If review establishes a security-relevant implementation bug, ambiguity, or clear-but-unsafe specification, prepare a private packet:
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from nirvana.differential import DifferentialManifest, compare, minimize_mismatch
 from nirvana.differential_workflow import (
-    attach_report,
+    attach_comparison_result,
     classify_mismatch,
     prepare_disclosure_packet,
     write_feedback_package,
@@ -35,13 +35,28 @@ class DifferentialWorkflowTests(unittest.TestCase):
             report_path = root / "report.json"
             atomic_write_json(report_path, report)
             audit_result = audit(EVM_FIXTURE, root / "runs")
-            hypotheses = attach_report(audit_result.run_directory, report_path)
+            hypotheses = attach_comparison_result(
+                audit_result.run_directory, report, report_path
+            )
             self.assertEqual(len(hypotheses), 1)
             self.assertEqual(hypotheses[0].generator, "differential-analysis")
+            attachment = next(
+                json.loads(line)["payload"]
+                for line in (audit_result.run_directory / "evidence.jsonl")
+                .read_text()
+                .splitlines()
+                if json.loads(line)["payload"].get("event")
+                == "differential_report_attached"
+            )
+            self.assertEqual(
+                attachment["attachment_source"], "in_process_spec_compare"
+            )
             records_after_first_attachment = len(
                 (audit_result.run_directory / "evidence.jsonl").read_text().splitlines()
             )
-            repeated = attach_report(audit_result.run_directory, report_path)
+            repeated = attach_comparison_result(
+                audit_result.run_directory, report, report_path
+            )
             self.assertEqual(
                 [item.hypothesis_id for item in repeated],
                 [item.hypothesis_id for item in hypotheses],
@@ -120,7 +135,42 @@ class DifferentialWorkflowTests(unittest.TestCase):
             atomic_write_json(report_path, report)
             audit_result = audit(EVM_FIXTURE, root / "runs")
             with self.assertRaisesRegex(ValueError, "report is invalid"):
-                attach_report(audit_result.run_directory, report_path)
+                attach_comparison_result(
+                    audit_result.run_directory, report, report_path
+                )
+
+    def test_comparison_attachment_rejects_detached_output_substitution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = compare(
+                DifferentialManifest.load(DIFF_FIXTURE / "manifest.toml"),
+                CommandRunner(
+                    ExecutionPolicy(
+                        allow_host_execution=True, accept_host_network_risk=True
+                    ),
+                    ExecutionMode.HOST,
+                ),
+            )
+            report_path = root / "report.json"
+            substituted = report.to_dict()
+            substituted["warnings"].append("detached replacement")
+            atomic_write_json(report_path, substituted)
+            audit_result = audit(EVM_FIXTURE, root / "runs")
+
+            with self.assertRaisesRegex(
+                ValueError, "changed before its in-process attachment"
+            ):
+                attach_comparison_result(
+                    audit_result.run_directory, report, report_path
+                )
+
+            events = [
+                json.loads(line)["payload"]["event"]
+                for line in (audit_result.run_directory / "evidence.jsonl")
+                .read_text()
+                .splitlines()
+            ]
+            self.assertNotIn("differential_report_attached", events)
 
     def test_self_declared_validity_cannot_bypass_downstream_gates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -134,12 +184,8 @@ class DifferentialWorkflowTests(unittest.TestCase):
             report["valid"] = True
             report_path = root / "boolean-flipped-report.json"
             atomic_write_json(report_path, report)
-            audit_result = audit(EVM_FIXTURE, root / "runs")
 
             operations = {
-                "attach": lambda: attach_report(
-                    audit_result.run_directory, report_path
-                ),
                 "classify": lambda: classify_mismatch(
                     report_path,
                     "odd",
@@ -160,14 +206,6 @@ class DifferentialWorkflowTests(unittest.TestCase):
                 with self.subTest(workflow=name):
                     with self.assertRaisesRegex(ValueError, "validity conflicts"):
                         operation()
-
-            events = [
-                json.loads(line)["payload"]["event"]
-                for line in (audit_result.run_directory / "evidence.jsonl")
-                .read_text()
-                .splitlines()
-            ]
-            self.assertNotIn("differential_report_attached", events)
 
 
 if __name__ == "__main__":

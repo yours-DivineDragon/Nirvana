@@ -6,7 +6,7 @@ Nirvana is a local, evidence-gated security research system for authorized bug-b
 
 ## Current status
 
-Version `0.4.12` implements the complete orchestration skeleton described by the two founding PDFs:
+Version `0.4.13` implements the complete orchestration skeleton described by the two founding PDFs:
 
 - hostile-repository intake with commit, dependency, submodule, artifact, toolchain, privilege, upgrade, external-dependency, and snapshot provenance;
 - opt-in, digest-pinned Docker build/test baselines with hash-bound generated ABI, IDL, bytecode, and build artifacts;
@@ -163,9 +163,9 @@ nirvana spec feedback triage.json minimized.json \
   --output feedback.json --run-directory <run-directory>
 ```
 
-Attached mismatches become `localised` hypotheses in the run ledger; they never self-promote to proof. A private, seven-part coordinated-disclosure packet can be prepared, but Nirvana never sends it:
+Only the in-process result of `spec compare --run-directory` can enter an audit run. The CLI has no standalone report-attachment command: before writing the ledger event, it binds the runner-produced report object to the exact serialized output hash. Detached JSON can still be reviewed, but cannot originate audit hypotheses. Attached mismatches become `localised` hypotheses in the run ledger; they never self-promote to proof. A private, seven-part coordinated-disclosure packet can be prepared, but Nirvana never sends it:
 
-A differential report is valid only when every scheduled execution is accounted for, at least one output is normalizable, and no execution is blocked, timed out, or flaky. When no implementation produces normalizable output for one input, the report records that case as `unnormalizable` agreement-on-rejection and excludes it from comparison without poisoning the run. When only some implementations normalize, crash-versus-output is retained as a real mismatch. Harness-level failures make the CLI print `INVALID`, exit `2`, and refuse `--run-directory`, `spec attach`, classification, and disclosure. Every imported report has its schedule, case counts, implementation outcomes, and validity re-derived before use; the `valid` field is never trusted by itself. Non-zero returns with normalizable output remain valid observable outcomes. Repeating an attachment for the same valid report is idempotent.
+A differential report is valid only when every scheduled execution is accounted for, at least one output is normalizable, and no execution is blocked, timed out, or flaky. When no implementation produces normalizable output for one input, the report records that case as `unnormalizable` agreement-on-rejection and excludes it from comparison without poisoning the run. When only some implementations normalize, crash-versus-output is retained as a real mismatch. Harness-level failures make the CLI print `INVALID`, exit `2`, and refuse `--run-directory`, classification, and disclosure. Every imported report has its schedule, case counts, implementation outcomes, and validity re-derived before use; the `valid` field is never trusted by itself. Non-zero returns with normalizable output remain valid observable outcomes. Repeating the attachment of the same in-process result is idempotent.
 
 ```bash
 nirvana disclose prepare differential-report.json triage.json minimized.json \
