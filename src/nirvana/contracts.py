@@ -101,6 +101,8 @@ def _validate(value: Any, schema: dict[str, Any], schema_name: str, path: str, r
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
             _fail(path, f"must be at least {schema['minimum']}")
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            _fail(path, f"must be greater than {schema['exclusiveMinimum']}")
         if "maximum" in schema and value > schema["maximum"]:
             _fail(path, f"must be at most {schema['maximum']}")
 

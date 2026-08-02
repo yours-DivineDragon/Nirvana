@@ -5,10 +5,10 @@ Nirvana separates a valid measurement from a maturity claim. A small or explorat
 `benchmark-report.json` exposes the distinction directly:
 
 - `release_gates.closed_beta.precision_thresholds_met` applies the founding specification's 80% overall and 90% High/Critical precision targets.
-- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v6` operational floors.
+- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v7` operational floors.
 - `release_gates.closed_beta.passed` is true only when both are true.
 
-The v6 operational floors are project policy, not a claim that a particular sample size proves general performance:
+The v7 operational floors are project policy, not a claim that a particular sample size proves general performance:
 
 | Qualification check | Floor |
 |---|---:|
@@ -25,7 +25,7 @@ The v6 operational floors are project policy, not a claim that a particular samp
 | Magma levels | Detection is derived, trigger declarations include ledger-demonstrated triggers, and `detected ⊆ triggered ⊆ reached` |
 | Novelty adjudication | Every checkpointed finding has a corpus-bound `novelty_assessed` event before sealing |
 | High/Critical evidence | Executable or stronger for every report |
-| Trial accounting | Complete tokens, budget, compute, and model cost |
+| Trial accounting | Complete tokens, budget, model cost, and positive compute bounded by the ordered wall-clock window and declared worker count |
 
 These floors prevent a one-case perfect score from minting closed beta. Precision, recall, confidence intervals, failure clusters, and per-track performance still need human interpretation on larger suites.
 
@@ -84,12 +84,13 @@ Run every eligible case with at least three distinct integer seeds. Each trial m
   "token_budget": 100000,
   "tokens_used": 42810,
   "cost_accounting_complete": true,
+  "worker_count": 2,
   "compute_hours": 0.75,
   "model_cost": 0.0
 }
 ```
 
-`tokens_used` must not exceed a non-zero budget. A zero model cost is valid for local inference, but it must be recorded deliberately. A High or Critical claim below `executable` cannot enter a Nirvana `finding_confirmed` event, so it cannot satisfy the trial-ledger binding.
+`ended_at` must be later than `started_at`. `worker_count` is the positive integer number of concurrent workers available to the trial, and declared compute must satisfy `0 < compute_hours <= wall-clock hours × worker_count`. These are consistency bounds on agent-host declarations, not proof that the host measured them honestly. `tokens_used` must not exceed a non-zero budget. A zero model cost is valid for local inference, but it must be recorded deliberately. A High or Critical claim below `executable` cannot enter a Nirvana `finding_confirmed` event, so it cannot satisfy the trial-ledger binding.
 
 Before ground truth is revealed, seal each completed Nirvana run and export the exact checkpoint the manifest will reference:
 
@@ -99,7 +100,7 @@ nirvana benchmark seal-trial ./nirvana-runs/<run-id> \
   --output ./nirvana-runs/<run-id>/benchmark-trial-checkpoint.json
 ```
 
-The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.3 records the ledger-backed target snapshot algorithm and digest plus each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction and verified patched-control state, latest novelty classification and corpus hash, exact-duplicate/novel booleans, and elapsed ledger time from `scope_captured` to `finding_confirmed`. It also reconstructs all six coverage dimensions from the hash-bound `coverage-initial.json` plus checkpointed `coverage_updated` events and seals the canonical final projection. It refuses an incomplete target snapshot, missing coverage provenance, or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256, derived coverage digest and values, and relative paths into manifest v1.4:
+The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.3 records the ledger-backed target snapshot algorithm and digest plus each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction and verified patched-control state, latest novelty classification and corpus hash, exact-duplicate/novel booleans, and elapsed ledger time from `scope_captured` to `finding_confirmed`. It also reconstructs all six coverage dimensions from the hash-bound `coverage-initial.json` plus checkpointed `coverage_updated` events and seals the canonical final projection. It refuses an incomplete target snapshot, missing coverage provenance, or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256, derived coverage digest and values, and relative paths into manifest v1.5:
 
 ```json
 {
@@ -125,7 +126,7 @@ Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a f
 
 Magma accounting is validated per trial. `detected_ids` must exactly equal the committed ground-truth ids attributed to ledger-bound `true_positive` findings. Replay-verified executable-or-stronger evidence establishes a minimum trigger set even when the eventual adjudication is false positive. Declared triggering must include that lower bound, and every trial must satisfy `detected ⊆ triggered ⊆ reached`. The report labels detection as `derived_from_ledger_bound_true_positives`, triggering as `declared_with_ledger_lower_bound`, and reach as `declared`; Nirvana does not overstate reach as a ledger-derived fact.
 
-Run novelty assessment before sealing when the result will support a maturity claim. `novel` is derived only from `novel_mechanism`, while `duplicate` is derived only from `exact_duplicate`. A finding with no checkpointed `novelty_assessed` event is sealed with both values as `null`: the pilot remains valid, but novel validated yield and duplicate rate stay undefined as applicable, and closed-beta v6 qualification fails. Manifest v1.4, case-pack v1.4, and trial seal v1.3 are intentionally incompatible with older unbound benchmark claims.
+Run novelty assessment before sealing when the result will support a maturity claim. `novel` is derived only from `novel_mechanism`, while `duplicate` is derived only from `exact_duplicate`. A finding with no checkpointed `novelty_assessed` event is sealed with both values as `null`: the pilot remains valid, but novel validated yield and duplicate rate stay undefined as applicable, and closed-beta v7 qualification fails. Manifest v1.5, case-pack v1.4, and trial seal v1.3 are intentionally incompatible with older benchmark claims that lack worker-capacity accounting.
 
 The checkpoint remains a tamper-evident local commitment until its hash is published to an independent trusted store. Nirvana reports whether the checkpoint contains an `external_anchor`, but does not claim to verify the honesty, independence, or publication time of that outside service.
 
