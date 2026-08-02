@@ -18,9 +18,13 @@ from .models import (
     NoveltyClass,
 )
 from .util import canonical_json, sha256_bytes, sha256_file
+from .verification import MAX_RECEIPT_BYTES, load_receipt
 
 
 BENCHMARK_LEDGER_BINDING_ALGORITHM = "nirvana-ledger-checkpoint-v1"
+BENCHMARK_RECEIPT_RUNTIME_ALGORITHM = (
+    "nirvana-checkpointed-execution-receipts-v1"
+)
 MAX_BENCHMARK_LEDGER_BYTES = 256 * 1024 * 1024
 MAX_BENCHMARK_CHECKPOINT_BYTES = 1024 * 1024
 MAX_BENCHMARK_COVERAGE_BYTES = 16 * 1024 * 1024
@@ -72,6 +76,7 @@ def seal_benchmark_trial(
         raise ValueError("benchmark trial target snapshot is incomplete")
     findings, _, finding_states, violations = _checkpointed_findings(records, scope)
     coverage_state = _checkpointed_coverage(resolved_run, records)
+    receipt_runtime = _checkpointed_receipt_runtime(resolved_run, records)
     if violations:
         raise ValueError(
             "benchmark trial findings are not ledger-valid: " + "; ".join(violations)
@@ -94,6 +99,7 @@ def seal_benchmark_trial(
             findings,
             finding_states,
             coverage_state,
+            receipt_runtime,
             scope,
         )
         if seal_violations:
@@ -105,7 +111,7 @@ def seal_benchmark_trial(
         seal_record_hash = existing_seals[0]["record_hash"]
     else:
         seal = {
-            "schema_version": "1.3.0",
+            "schema_version": "1.4.0",
             "event": "benchmark_trial_sealed",
             "trial_id": trial_id,
             "case_id": case_id,
@@ -120,6 +126,7 @@ def seal_benchmark_trial(
             "target_snapshot_sha256": scope.target_snapshot_sha256,
             "coverage_sha256": coverage_state["coverage_sha256"],
             "coverage": coverage_state["coverage"],
+            "execution_receipt_runtime": receipt_runtime,
         }
         validate_contract(seal, "benchmark-trial-seal.schema.json")
         seal_record_hash = ledger.append(seal)["record_hash"]
@@ -173,6 +180,7 @@ def validate_trial_ledger_bindings(
                 "derived_findings": [],
                 "coverage_sha256": None,
                 "derived_coverage": None,
+                "execution_receipt_runtime": None,
                 "target_snapshot_algorithm": None,
                 "target_snapshot_sha256": None,
                 "expected_case_target_snapshot_algorithm": (
@@ -212,6 +220,22 @@ def validate_trial_ledger_bindings(
         "target_bound_trial_count": sum(
             item["target_binding_valid"] is True for item in results
         ),
+        "execution_receipt_count": sum(
+            item["execution_receipt_runtime"]["receipt_count"]
+            for item in results
+            if item["execution_receipt_runtime"] is not None
+        ),
+        "execution_receipt_duration_ms": sum(
+            item["execution_receipt_runtime"]["execution_duration_ms"]
+            for item in results
+            if item["execution_receipt_runtime"] is not None
+        ),
+        "minimum_compute_hours": sum(
+            item["execution_receipt_runtime"]["minimum_compute_hours"]
+            for item in results
+            if item["execution_receipt_runtime"] is not None
+        ),
+        "compute_floor_source": "derived_from_checkpointed_execution_receipts",
         "externally_anchored_trial_count": externally_anchored_trials,
         "trials": results,
         "violations": violations,
@@ -279,6 +303,7 @@ def _validate_trial_binding(
         records, scope
     )
     coverage_state = _checkpointed_coverage(run_directory, records)
+    receipt_runtime = _checkpointed_receipt_runtime(run_directory, records)
     supporting_evidence = {
         evidence_id
         for finding in findings.values()
@@ -304,7 +329,13 @@ def _validate_trial_binding(
             f"{post_checkpoint_invalidated}"
         )
     seal_sequence, seal_violations = _validate_trial_seal(
-        records, trial, findings, finding_states, coverage_state, scope
+        records,
+        trial,
+        findings,
+        finding_states,
+        coverage_state,
+        receipt_runtime,
+        scope,
     )
     semantic_violations.extend(seal_violations)
     target_binding_valid: bool | None = None
@@ -329,6 +360,15 @@ def _validate_trial_binding(
     if trial["coverage"] != coverage_state["coverage"]:
         semantic_violations.append(
             f"trial {trial_id} coverage values do not match its checkpointed run"
+        )
+    declared_compute_hours = float(trial["compute_hours"])
+    minimum_compute_hours = float(receipt_runtime["minimum_compute_hours"])
+    if declared_compute_hours < minimum_compute_hours:
+        semantic_violations.append(
+            f"trial {trial_id} compute_hours {declared_compute_hours} is below its "
+            "checkpointed execution-receipt floor: "
+            f"{minimum_compute_hours} "
+            f"({receipt_runtime['execution_duration_ms']} ms)"
         )
     claimed = {str(item["finding_id"]): item for item in trial["findings"]}
     checkpointed_ids = set(findings)
@@ -421,6 +461,7 @@ def _validate_trial_binding(
         "derived_findings": _finding_claims(findings, finding_states),
         "coverage_sha256": coverage_state["coverage_sha256"],
         "derived_coverage": coverage_state["coverage"],
+        "execution_receipt_runtime": receipt_runtime,
         "target_snapshot_algorithm": scope.target_snapshot_algorithm,
         "target_snapshot_sha256": scope.target_snapshot_sha256,
         "expected_case_target_snapshot_algorithm": (
@@ -445,6 +486,7 @@ def _validate_trial_seal(
     findings: dict[str, Finding],
     finding_states: dict[str, dict[str, Any]],
     coverage_state: dict[str, Any],
+    receipt_runtime: dict[str, Any],
     scope: ScopeManifest,
 ) -> tuple[int | None, list[str]]:
     trial_id = str(trial["trial_id"])
@@ -512,6 +554,11 @@ def _validate_trial_seal(
     if seal["coverage"] != coverage_state["coverage"]:
         violations.append(
             f"trial {trial_id} trial-seal coverage values do not match the ledger"
+        )
+    if seal["execution_receipt_runtime"] != receipt_runtime:
+        violations.append(
+            f"trial {trial_id} trial-seal execution-receipt runtime does not "
+            "match the checkpointed ledger artifacts"
         )
     return int(record["sequence"]), violations
 
@@ -764,6 +811,144 @@ def _checkpointed_findings(
     return findings, currently_verified, finding_states, violations
 
 
+def _checkpointed_receipt_runtime(
+    run_directory: Path, records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Derive a conservative compute floor from distinct ledger-bound receipts."""
+
+    original_artifacts: dict[str, str] = {}
+    receipts: dict[str, dict[str, Any]] = {}
+    for record in records:
+        payload = record["payload"]
+        event = payload.get("event")
+        evidence_id: str | None = None
+        artifact_path: Any = None
+        artifact_sha256: Any = None
+        expected_replay_of: str | None = None
+
+        if event == "evidence_recorded":
+            evidence = EvidenceRecord.from_dict(payload["evidence"])
+            if evidence.metadata.get("runner_minted") is not True:
+                continue
+            evidence_id = evidence.evidence_id
+            artifact_path = evidence.artifact_path
+            artifact_sha256 = evidence.artifact_sha256
+            if evidence_id in original_artifacts:
+                raise ValueError(
+                    f"duplicate runner-minted execution receipt for {evidence_id}"
+                )
+            original_artifacts[evidence_id] = _sha256_value(
+                artifact_sha256,
+                f"checkpointed evidence {evidence_id} execution receipt",
+            )
+        elif event == "execution_rejected":
+            evidence_id = _nonempty_string(
+                payload.get("evidence_id"),
+                "checkpointed rejected execution evidence id",
+            )
+            artifact_path = payload.get("artifact_path")
+            artifact_sha256 = payload.get("artifact_sha256")
+        elif event in {"evidence_verified", "evidence_replay_failed"}:
+            evidence_id = _nonempty_string(
+                payload.get("evidence_id"),
+                "checkpointed replay evidence id",
+            )
+            expected_replay_of = original_artifacts.get(evidence_id)
+            if expected_replay_of is None:
+                raise ValueError(
+                    f"checkpointed replay for {evidence_id} lacks its earlier "
+                    "runner-minted execution receipt"
+                )
+            if payload.get("original_artifact_sha256") != expected_replay_of:
+                raise ValueError(
+                    f"checkpointed replay for {evidence_id} does not bind its "
+                    "original execution receipt"
+                )
+            artifact_path = payload.get("replay_artifact_path")
+            artifact_sha256 = payload.get("replay_artifact_sha256")
+        else:
+            continue
+
+        digest = _sha256_value(
+            artifact_sha256,
+            f"checkpointed {event} execution receipt",
+        )
+        receipt_path = _run_artifact_file(
+            run_directory,
+            artifact_path,
+            f"checkpointed {event} execution receipt",
+        )
+        if sha256_file(receipt_path) != digest:
+            raise ValueError(
+                f"checkpointed {event} execution receipt hash mismatch"
+            )
+        receipt = load_receipt(receipt_path)
+        if receipt.get("evidence_id") != evidence_id:
+            raise ValueError(
+                f"checkpointed {event} execution receipt has the wrong evidence id"
+            )
+        observed_replay_of = receipt.get("replay_of")
+        if expected_replay_of is None and observed_replay_of is not None:
+            raise ValueError(
+                f"checkpointed {event} original execution receipt is marked as a replay"
+            )
+        if expected_replay_of is not None and observed_replay_of != expected_replay_of:
+            raise ValueError(
+                f"checkpointed replay for {evidence_id} does not replay its bound "
+                "original receipt"
+            )
+
+        relative_path = receipt_path.relative_to(run_directory).as_posix()
+        result_duration = int(receipt["result"]["duration_ms"])
+        negative_control = receipt.get("negative_control")
+        control_duration = (
+            int(negative_control["result"]["duration_ms"])
+            if isinstance(negative_control, dict)
+            else 0
+        )
+        entry = {
+            "ledger_sequence": int(record["sequence"]),
+            "event": str(event),
+            "evidence_id": evidence_id,
+            "artifact_path": relative_path,
+            "artifact_sha256": digest,
+            "result_duration_ms": result_duration,
+            "negative_control_duration_ms": control_duration,
+            "duration_ms": result_duration + control_duration,
+        }
+        existing = receipts.get(relative_path)
+        if existing is not None:
+            comparable = {
+                key: value
+                for key, value in entry.items()
+                if key not in {"ledger_sequence", "event"}
+            }
+            existing_comparable = {
+                key: value
+                for key, value in existing.items()
+                if key not in {"ledger_sequence", "event"}
+            }
+            if comparable != existing_comparable:
+                raise ValueError(
+                    "checkpointed ledger reuses an execution receipt with "
+                    "conflicting claims"
+                )
+            continue
+        receipts[relative_path] = entry
+
+    entries = sorted(receipts.values(), key=lambda item: item["artifact_path"])
+    execution_duration_ms = sum(item["duration_ms"] for item in entries)
+    return {
+        "algorithm": BENCHMARK_RECEIPT_RUNTIME_ALGORITHM,
+        "receipt_set_sha256": sha256_bytes(
+            canonical_json(entries).encode("utf-8")
+        ),
+        "receipt_count": len(entries),
+        "execution_duration_ms": execution_duration_ms,
+        "minimum_compute_hours": execution_duration_ms / 3_600_000,
+    }
+
+
 def _checkpointed_coverage(
     run_directory: Path, records: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -878,6 +1063,42 @@ def _regular_file(path: Path, max_bytes: int, label: str) -> Path:
             f"{label} must be a regular non-symlink file no larger than {max_bytes} bytes"
         )
     return path.resolve(strict=True)
+
+
+def _run_artifact_file(run_directory: Path, value: Any, label: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} path must be a non-empty string")
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = run_directory / candidate
+    try:
+        relative = candidate.relative_to(run_directory)
+    except ValueError as error:
+        raise ValueError(f"{label} must stay inside the run directory") from error
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError(f"{label} must stay inside the run directory")
+    current = run_directory
+    for part in relative.parts:
+        current = current / part
+        if stat.S_ISLNK(current.lstat().st_mode):
+            raise ValueError(f"{label} path must not contain symlinks")
+    return _regular_file(current, MAX_RECEIPT_BYTES, label)
+
+
+def _nonempty_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    return value
+
+
+def _sha256_value(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{label} must bind a SHA-256 digest")
+    return value
 
 
 def _checkpoint_output(path: Path) -> Path:

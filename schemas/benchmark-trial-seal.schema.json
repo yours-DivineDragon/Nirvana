@@ -3,9 +3,9 @@
   "$id": "https://nirvana.security/schemas/benchmark-trial-seal.schema.json",
   "title": "Nirvana benchmark trial ledger seal",
   "type": "object",
-  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256", "target_snapshot_algorithm", "target_snapshot_sha256", "coverage_sha256", "coverage"],
+  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256", "target_snapshot_algorithm", "target_snapshot_sha256", "coverage_sha256", "coverage", "execution_receipt_runtime"],
   "properties": {
-    "schema_version": {"const": "1.3.0"},
+    "schema_version": {"const": "1.4.0"},
     "event": {"const": "benchmark_trial_sealed"},
     "trial_id": {"type": "string", "minLength": 1},
     "case_id": {"type": "string", "minLength": 1},
@@ -48,6 +48,18 @@
         "trust_boundaries": {"type": "number", "minimum": 0, "maximum": 1},
         "dynamic_states": {"type": "number", "minimum": 0, "maximum": 1},
         "flow_threat_tasks": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    },
+    "execution_receipt_runtime": {
+      "type": "object",
+      "required": ["algorithm", "receipt_set_sha256", "receipt_count", "execution_duration_ms", "minimum_compute_hours"],
+      "properties": {
+        "algorithm": {"const": "nirvana-checkpointed-execution-receipts-v1"},
+        "receipt_set_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "receipt_count": {"type": "integer", "minimum": 0},
+        "execution_duration_ms": {"type": "integer", "minimum": 0},
+        "minimum_compute_hours": {"type": "number", "minimum": 0}
       },
       "additionalProperties": false
     }
