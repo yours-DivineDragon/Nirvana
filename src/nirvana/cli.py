@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.2")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.3")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -386,7 +386,9 @@ def main(argv: list[str] | None = None) -> int:
                 attach_report(args.run_directory, args.output)
             print(args.output.resolve())
             print(
-                f"cases: {report.case_count}; mismatches: {len(report.mismatches)}; "
+                f"cases: {report.case_count}; comparable cases: {report.comparable_case_count}; "
+                f"mismatches: {len(report.mismatches)}; "
+                f"unnormalizable cases: {report.unnormalizable_case_count}; "
                 f"blocked executions: {report.blocked_executions}"
             )
             for warning in report.warnings:

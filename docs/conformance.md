@@ -21,7 +21,7 @@ This map records how version 0.4 implements the two founding PDFs and, equally i
 | Finding contract | Target-bound claim, root cause, locations, prerequisites, assumptions, SSG causal path, reproducer, impact, severity rationale, remediation, regression, evidence IDs | `finding.schema.json`, `finding_confirmed` | Severity still requires expert impact judgment |
 | Output and learning | Reports, rejection archive, candidate learning bundle, and six-gate detector review | `learning/*.json`, detector outcome | Production rules are never auto-mutated |
 | Efficiency/model routing | Per-hypothesis model cost fields and execution duration accounting; no model APIs | report `cost_accounting`, benchmark metrics | Agent-side token/cost data must be supplied by the agent host |
-| Temporal evaluation | Blind cutoff validation, hidden-variant logs, archived model/prompt/tool/budget/environment/transcript provenance | benchmark manifest/report v1.1 | Invalid temporal splits set report-level `valid: false`; CLI metrics are suppressed and exit status is nonzero |
+| Temporal evaluation | Blind cutoff validation, hidden-variant logs, archived model/prompt/tool/budget/environment/transcript provenance | benchmark manifest v1.0/report v1.2 | Invalid temporal splits set report-level `valid: false`; artifact metrics and Magma results are null, all release gates close, and exit status is nonzero |
 | Metrics and release gates | Eleven source metrics, Magma reached/triggered/detected, plus research, Web3-alpha, closed-beta, production, and universal-expansion gates backed by explicit release evidence | `benchmark-report.json` | Non-statistical stages require retained artifacts whose hashes are verified while evaluating the manifest; closed beta also requires a blind temporal suite |
 | Ledger anchoring | Hash chain plus portable prefix checkpoints that remain valid after later appends | `ledger-checkpoint.json` | Publishing the checkpoint to an independent trusted store is deployment work |
 
@@ -29,12 +29,12 @@ This map records how version 0.4 implements the two founding PDFs and, equally i
 
 | Source requirement | Implementation | Acceptance artifact |
 |---|---|---|
-| Pinned observable contract | Specification, corpus, manifest, source sets, commands, languages, models/prompts, versions, and runner policy are hashed | differential report v2.1 |
+| Pinned observable contract | Specification, corpus, manifest, source sets, commands, languages, models/prompts, versions, and runner policy are hashed | differential report v2.2 |
 | Independent implementations | Provenance is mandatory for agent-produced implementations | `implementations[]` |
 | Proved comparator | JSON/text normalizers have agreement/divergence fixtures | unit tests plus report normalizer |
 | Shared and generated cases | Canonical JSONL plus seeded bounded mutation; shortfalls are warnings | case and fuzz counts |
 | Repeat/flake detection | Two to twenty runs, observed signatures, stable/flake classification | each outcome plus `flaky_executions` |
-| Fail-closed harness validity | Every scheduled run must be unblocked, non-timeout, and normalizable; import gates derive validity from cross-field execution facts; non-zero returns remain observable outcomes, while invalid reports cannot enter downstream workflows | `valid`, execution counts, `invalid_reasons`, CLI exit `2` |
+| Fail-closed harness validity | Every scheduled run must be accounted for, with at least one normalizable output and no block, timeout, or flake; all-rejection inputs are case-level exclusions and mixed normalization is a mismatch; import gates derive validity from cross-field facts | `valid`, execution/case counts, `unnormalizable_cases`, `invalid_reasons`, CLI exit `2` |
 | Four mismatch classes | Durable classification rejects `unclassified` as a final decision | `differential-triage.json` |
 | Minimize every seed | Deterministic JSON delta reduction reruns all implementations and refuses flaky cases | `differential-minimization.json` |
 | Feed back into prose/tests | Review-only spec amendment and regression corpus case | `differential-feedback.json` |

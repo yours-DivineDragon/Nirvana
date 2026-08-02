@@ -52,6 +52,9 @@ class SkillAssetTests(unittest.TestCase):
         self.assertFalse(report["valid"])
         self.assertFalse(report["temporal_validation"]["valid"])
         self.assertFalse(report["release_gates"]["closed_beta"]["passed"])
+        self.assertIsNone(report["metrics"])
+        self.assertIsNone(report["magma"])
+        self.assertTrue(report["invalid_reasons"])
 
 
 if __name__ == "__main__":

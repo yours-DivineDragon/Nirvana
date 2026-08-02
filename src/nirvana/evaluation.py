@@ -196,25 +196,29 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "adapter_conformance": adapter_conformance,
         },
     }
+    if not temporal["valid"]:
+        for gate in release_gates.values():
+            gate["passed"] = False
     warnings: list[str] = []
     if not temporal["valid"]:
         warnings.extend(temporal["violations"])
         warnings.insert(
             0,
-            "benchmark report is invalid; metrics are diagnostic only and must not be used as release evidence",
+            "benchmark report is invalid; metrics and Magma results were suppressed",
         )
     if metrics["ground_truth_recall"] is None:
         warnings.append("ground-truth recall is undefined because no eligible vulnerabilities were supplied")
     if not high_reports:
         warnings.append("high-severity precision is undefined because no high/critical reports were emitted")
     report = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
         "track": manifest["track"],
         "valid": temporal["valid"],
         "temporal_validation": temporal,
+        "invalid_reasons": list(temporal["violations"]),
         "counts": {
             "cases": len(cases),
             "trials": len(trials),
@@ -223,8 +227,8 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "true_reports": len(true_reports),
             "confirmed_true_reports": len(confirmed),
         },
-        "metrics": metrics,
-        "magma": magma,
+        "metrics": metrics if temporal["valid"] else None,
+        "magma": magma if temporal["valid"] else None,
         "release_gates": release_gates,
         "warnings": warnings,
     }

@@ -6,7 +6,7 @@ Nirvana is a local, evidence-gated security research system for authorized bug-b
 
 ## Current status
 
-Version `0.4.2` implements the complete orchestration skeleton described by the two founding PDFs:
+Version `0.4.3` implements the complete orchestration skeleton described by the two founding PDFs:
 
 - hostile-repository intake with commit, dependency, submodule, artifact, toolchain, privilege, upgrade, external-dependency, and snapshot provenance;
 - opt-in, digest-pinned Docker build/test baselines with hash-bound generated ABI, IDL, bytecode, and build artifacts;
@@ -165,7 +165,7 @@ nirvana spec feedback triage.json minimized.json \
 
 Attached mismatches become `localised` hypotheses in the run ledger; they never self-promote to proof. A private, seven-part coordinated-disclosure packet can be prepared, but Nirvana never sends it:
 
-A differential report is valid only when every scheduled execution runs and produces normalizable output. Blocked, timed-out, or unnormalizable runs make the CLI print `INVALID`, exit `2`, and refuse `--run-directory`, `spec attach`, classification, and disclosure. Every imported report has its schedule, case counts, implementation outcomes, and validity re-derived before use; the `valid` field is never trusted by itself. Non-zero returns with normalizable output remain valid observable outcomes. Repeating an attachment for the same valid report is idempotent.
+A differential report is valid only when every scheduled execution is accounted for, at least one output is normalizable, and no execution is blocked, timed out, or flaky. When no implementation produces normalizable output for one input, the report records that case as `unnormalizable` agreement-on-rejection and excludes it from comparison without poisoning the run. When only some implementations normalize, crash-versus-output is retained as a real mismatch. Harness-level failures make the CLI print `INVALID`, exit `2`, and refuse `--run-directory`, `spec attach`, classification, and disclosure. Every imported report has its schedule, case counts, implementation outcomes, and validity re-derived before use; the `valid` field is never trusted by itself. Non-zero returns with normalizable output remain valid observable outcomes. Repeating an attachment for the same valid report is idempotent.
 
 ```bash
 nirvana disclose prepare differential-report.json triage.json minimized.json \
@@ -181,7 +181,7 @@ Benchmark manifests pin a cutoff, corpora, last-vulnerable commits, hidden-varia
 nirvana benchmark evaluate benchmark-manifest.json --output benchmark-report.json
 ```
 
-The report computes validated precision, ground-truth recall, high/critical precision, novel validated yield, time to first valid finding, evidence distribution, reproduction rate, coverage completeness, duplicate rate, calibration, patch correctness, cost efficiency, stability, and reached/triggered/detected counts. It evaluates the PDF's research-prototype, Web3-alpha, closed-beta, production-candidate, and universal-expansion gates against explicit `release_evidence`. Every non-statistical release gate also needs a retained, hash-verified evidence artifact for that gate; booleans alone cannot mint a maturity claim. Closed beta requires a valid blind temporal suite with at least 80% validated precision and 90% high/critical precision. A contaminated manifest produces `valid: false`, prints every violation, suppresses CLI metrics, and exits `2`; its retained metrics are diagnostic only. Without `--output`, the report is written beside the manifest rather than into the caller's current directory. Undefined metrics stay undefined rather than being reported as zero.
+The report computes validated precision, ground-truth recall, high/critical precision, novel validated yield, time to first valid finding, evidence distribution, reproduction rate, coverage completeness, duplicate rate, calibration, patch correctness, cost efficiency, stability, and reached/triggered/detected counts. It evaluates the PDF's research-prototype, Web3-alpha, closed-beta, production-candidate, and universal-expansion gates against explicit `release_evidence`. Every non-statistical release gate also needs a retained, hash-verified evidence artifact for that gate; booleans alone cannot mint a maturity claim. Closed beta requires a valid blind temporal suite with at least 80% validated precision and 90% high/critical precision. A contaminated manifest produces `valid: false`, records every violation in `invalid_reasons`, writes `metrics: null` and `magma: null`, forces every release gate closed, prints the violations, and exits `2`. Without `--output`, the report is written beside the manifest rather than into the caller's current directory. Undefined metrics in a valid report stay undefined rather than being reported as zero.
 
 Every confirmed finding creates a candidate learning bundle. Promotion requires positive and benign-negative regressions, cross-project generalization, a performance/noise budget, human review, and provenance/license review:
 

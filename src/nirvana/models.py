@@ -371,6 +371,16 @@ class DifferentialMismatch:
         return jsonable(self)
 
 
+@dataclass(slots=True)
+class DifferentialUnnormalizableCase:
+    case_id: str
+    input_sha256: str
+    outcomes: list[DifferentialOutcome]
+    input: Any = None
+    status: str = "unnormalizable"
+    notes: list[str] = field(default_factory=list)
+
+
 def _validate_identifier(value: str, prefix: str) -> None:
     if not re.fullmatch(rf"{prefix}-[A-Za-z0-9._-]+", value):
         raise ValueError(f"identifier must match {prefix}-[A-Za-z0-9._-]+")
