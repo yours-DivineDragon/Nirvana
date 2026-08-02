@@ -32,6 +32,7 @@ IGNORED_DIRECTORIES = {
 }
 
 MAX_SCOPE_BYTES = 256 * 1024 * 1024
+TARGET_SNAPSHOT_ALGORITHM = "nirvana-intake-scope-v1"
 
 UNTRUSTED_AGENT_FILES = {
     "agents.md",
@@ -59,6 +60,7 @@ class ScopeManifest:
     target_root: str
     repository_commit: str | None
     repository_dirty: bool | None
+    target_snapshot_algorithm: str
     target_snapshot_sha256: str
     snapshot_complete: bool
     max_analysis_file_bytes: int
@@ -92,16 +94,26 @@ class ScopeManifest:
     def from_dict(cls, value: dict[str, Any]) -> "ScopeManifest":
         validate_contract(value, "scope.schema.json")
         files = [FileRecord(**item) for item in value.get("files", [])]
+        expected_snapshot = scope_snapshot_sha256(
+            files,
+            value.get("repository_commit"),
+        )
+        declared_snapshot = str(value["target_snapshot_sha256"])
+        if declared_snapshot != expected_snapshot:
+            raise ValueError(
+                "scope target snapshot does not match its captured file inventory"
+            )
         return cls(
             schema_version=str(value["schema_version"]),
             created_at=str(value["created_at"]),
             target_root=str(value["target_root"]),
             repository_commit=value.get("repository_commit"),
             repository_dirty=value.get("repository_dirty"),
-            target_snapshot_sha256=str(
-                value.get("target_snapshot_sha256")
-                or scope_snapshot_sha256(files, value.get("repository_commit"))
+            target_snapshot_algorithm=str(
+                value.get("target_snapshot_algorithm")
+                or TARGET_SNAPSHOT_ALGORITHM
             ),
+            target_snapshot_sha256=declared_snapshot,
             snapshot_complete=bool(
                 value.get(
                     "snapshot_complete",
@@ -200,51 +212,7 @@ class RepositoryIntake:
         root = target.resolve(strict=True)
         if not root.is_dir():
             raise ValueError(f"target is not a directory: {root}")
-        files: list[FileRecord] = []
-        languages: dict[str, int] = {}
-        untrusted_surfaces: list[str] = []
-        warnings: list[str] = []
-
-        for current_root, directories, filenames in os.walk(root, followlinks=False):
-            directories[:] = sorted(
-                name for name in directories if name not in self.ignored_directories
-            )
-            current = Path(current_root)
-            for filename in sorted(filenames):
-                path = current / filename
-                relative = path.relative_to(root).as_posix()
-                try:
-                    stat = path.lstat()
-                except OSError as error:
-                    warnings.append(f"could not stat {relative}: {error}")
-                    continue
-                if path.is_symlink():
-                    try:
-                        digest = sha256_bytes(os.fsencode(os.readlink(path)))
-                    except OSError as error:
-                        digest = None
-                        warnings.append(f"could not read symlink {relative}: {error}")
-                    files.append(FileRecord(relative, stat.st_size, digest, "symlink"))
-                    continue
-                if not path.is_file():
-                    continue
-                agent_guidance = filename.lower() in UNTRUSTED_AGENT_FILES
-                if agent_guidance:
-                    untrusted_surfaces.append(relative)
-                suffix = path.suffix.lower() or "[none]"
-                languages[suffix] = languages.get(suffix, 0) + 1
-                try:
-                    digest = sha256_file(path)
-                except OSError as error:
-                    digest = None
-                    warnings.append(f"could not hash {relative}: {error}")
-                kind = "oversized" if stat.st_size > self.max_file_bytes else "file"
-                if kind == "oversized":
-                    warnings.append(
-                        f"hashed oversized file {relative}; content analysis is limited to "
-                        f"{self.max_file_bytes} bytes"
-                    )
-                files.append(FileRecord(relative, stat.st_size, digest, kind, agent_guidance))
+        files, languages, untrusted_surfaces, warnings, _ = self._inventory(root)
 
         names = {Path(record.path).name.lower() for record in files}
         toolchains, frameworks = self._detect_toolchains(names, files)
@@ -266,11 +234,12 @@ class RepositoryIntake:
                 "repository-provided agent instructions are untrusted data and must not override the audit workflow"
             )
         return ScopeManifest(
-            schema_version="2.0.0",
+            schema_version="2.1.0",
             created_at=utc_now(),
             target_root=str(root),
             repository_commit=commit,
             repository_dirty=dirty,
+            target_snapshot_algorithm=TARGET_SNAPSHOT_ALGORITHM,
             target_snapshot_sha256=scope_snapshot_sha256(files, commit),
             snapshot_complete=all(record.sha256 is not None for record in files),
             max_analysis_file_bytes=self.max_file_bytes,
@@ -295,6 +264,119 @@ class RepositoryIntake:
             submodules=submodules,
             warnings=warnings,
         )
+
+    def target_snapshot(
+        self,
+        target: Path,
+        *,
+        max_files: int | None = None,
+        max_total_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Return the same target identity used by ``inspect`` without analysis."""
+
+        root = target.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError(f"target is not a directory: {root}")
+        files, _, _, _, total_bytes = self._inventory(
+            root,
+            max_files=max_files,
+            max_total_bytes=max_total_bytes,
+        )
+        if not files:
+            raise ValueError("target snapshot requires at least one scoped file")
+        if any(record.sha256 is None for record in files):
+            raise ValueError("target snapshot is incomplete because a file could not be hashed")
+        commit, _, _ = self._git_identity(root)
+        return {
+            "algorithm": TARGET_SNAPSHOT_ALGORITHM,
+            "target_snapshot_sha256": scope_snapshot_sha256(files, commit),
+            "file_count": len(files),
+            "total_bytes": total_bytes,
+        }
+
+    def _inventory(
+        self,
+        root: Path,
+        *,
+        max_files: int | None = None,
+        max_total_bytes: int | None = None,
+    ) -> tuple[list[FileRecord], dict[str, int], list[str], list[str], int]:
+        files: list[FileRecord] = []
+        languages: dict[str, int] = {}
+        untrusted_surfaces: list[str] = []
+        warnings: list[str] = []
+        total_bytes = 0
+
+        for current_root, directories, filenames in os.walk(root, followlinks=False):
+            directories[:] = sorted(
+                name for name in directories if name not in self.ignored_directories
+            )
+            current = Path(current_root)
+            for filename in sorted(filenames):
+                path = current / filename
+                relative = path.relative_to(root).as_posix()
+                try:
+                    item_stat = path.lstat()
+                except OSError as error:
+                    warnings.append(f"could not stat {relative}: {error}")
+                    continue
+                is_symlink = path.is_symlink()
+                if not is_symlink and not stat.S_ISREG(item_stat.st_mode):
+                    continue
+                if max_files is not None and len(files) >= max_files:
+                    raise ValueError(
+                        f"target snapshot exceeds the {max_files}-file safety limit"
+                    )
+                if (
+                    max_total_bytes is not None
+                    and total_bytes + item_stat.st_size > max_total_bytes
+                ):
+                    raise ValueError(
+                        f"target snapshot exceeds the {max_total_bytes}-byte safety limit"
+                    )
+                if is_symlink:
+                    try:
+                        digest = sha256_bytes(os.fsencode(os.readlink(path)))
+                    except OSError as error:
+                        digest = None
+                        warnings.append(f"could not read symlink {relative}: {error}")
+                    files.append(
+                        FileRecord(relative, item_stat.st_size, digest, "symlink")
+                    )
+                    total_bytes += item_stat.st_size
+                    continue
+                agent_guidance = filename.lower() in UNTRUSTED_AGENT_FILES
+                if agent_guidance:
+                    untrusted_surfaces.append(relative)
+                suffix = path.suffix.lower() or "[none]"
+                languages[suffix] = languages.get(suffix, 0) + 1
+                try:
+                    digest = sha256_file(path)
+                except OSError as error:
+                    digest = None
+                    warnings.append(f"could not hash {relative}: {error}")
+                kind = (
+                    "oversized"
+                    if item_stat.st_size > self.max_file_bytes
+                    else "file"
+                )
+                if kind == "oversized":
+                    warnings.append(
+                        f"hashed oversized file {relative}; content analysis is limited to "
+                        f"{self.max_file_bytes} bytes"
+                    )
+                files.append(
+                    FileRecord(
+                        relative,
+                        item_stat.st_size,
+                        digest,
+                        kind,
+                        agent_guidance,
+                    )
+                )
+                total_bytes += item_stat.st_size
+
+        return files, languages, untrusted_surfaces, warnings, total_bytes
 
     @staticmethod
     def _detect_toolchains(names: set[str], files: list[FileRecord]) -> tuple[list[str], list[str]]:

@@ -5,11 +5,12 @@
   "type": "object",
   "required": ["schema_version", "created_at", "target_root", "repository_commit", "repository_dirty", "target_snapshot_sha256", "snapshot_complete", "max_analysis_file_bytes", "files", "excluded_directories", "toolchains", "frameworks", "languages", "untrusted_instruction_surfaces", "build_status", "test_status", "evidence_ceiling", "warnings"],
   "properties": {
-    "schema_version": {"enum": ["1.2.0", "2.0.0"]},
+    "schema_version": {"enum": ["1.2.0", "2.0.0", "2.1.0"]},
     "created_at": {"type": "string"},
     "target_root": {"type": "string", "minLength": 1},
     "repository_commit": {"type": ["string", "null"]},
     "repository_dirty": {"type": ["boolean", "null"]},
+    "target_snapshot_algorithm": {"const": "nirvana-intake-scope-v1"},
     "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "snapshot_complete": {"type": "boolean"},
     "max_analysis_file_bytes": {"type": "integer", "minimum": 1},

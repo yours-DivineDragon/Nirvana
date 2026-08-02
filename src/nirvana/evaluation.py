@@ -45,7 +45,22 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         manifest, cases, case_pack
     )
     finding_attribution_validation = _validate_finding_attribution(cases, trials)
-    ledger_validation = validate_trial_ledger_bindings(resolved, trials)
+    case_target_snapshots = (
+        {
+            str(case["case_id"]): {
+                "algorithm": str(case_pack["target_snapshot_algorithm"]),
+                "target_snapshot_sha256": str(case["target_snapshot_sha256"]),
+            }
+            for case in case_pack["cases"]
+        }
+        if case_pack is not None
+        else None
+    )
+    ledger_validation = validate_trial_ledger_bindings(
+        resolved,
+        trials,
+        case_target_snapshots,
+    )
     magma_validation = _validate_magma_levels(cases, trials, ledger_validation)
     invalid_reasons = [
         *temporal["violations"],
@@ -350,7 +365,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.8.0",
+        "schema_version": "1.9.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -373,6 +388,9 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "true_reports": len(true_reports),
             "confirmed_true_reports": len(confirmed),
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "target_bound_trials": ledger_validation[
+                "target_bound_trial_count"
+            ],
             "novelty_assessed_findings": sum(
                 item.get("novelty_classification") is not None
                 for item in derived_finding_states.values()
@@ -1147,6 +1165,10 @@ def _suite_qualification(
         ]
         is True,
         "checkpointed_trial_ledgers": ledger_validation["valid"] is True,
+        "case_targets_match_audited_runs": bool(
+            case_pack is not None
+            and ledger_validation["target_bound_trial_count"] == len(trials)
+        ),
         "bound_monotonic_magma_levels": magma_validation["valid"] is True,
         "complete_checkpointed_novelty_adjudication": (
             fully_adjudicated_findings == len(derived_findings)
@@ -1193,6 +1215,10 @@ def _suite_qualification(
             "requires every trial and complete finding set to match a verified Nirvana "
             "ledger checkpoint with replay-verified evidence at the claimed tier"
         ),
+        "case_targets_match_audited_runs": (
+            "requires every ledger-sealed run target snapshot to equal the independently "
+            "committed case-pack target snapshot"
+        ),
         "bound_monotonic_magma_levels": (
             "requires ledger-derived detection, ledger-lower-bounded triggering, and "
             "detected ⊆ triggered ⊆ reached for every trial"
@@ -1211,7 +1237,7 @@ def _suite_qualification(
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v5",
+        "qualification_version": "nirvana-closed-beta-v6",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -1223,6 +1249,7 @@ def _suite_qualification(
             "committed_case_sizes": True,
             "committed_case_metadata": True,
             "checkpointed_trial_ledgers": True,
+            "case_targets_match_audited_runs": True,
             "bound_monotonic_magma_levels": True,
             "complete_checkpointed_novelty_adjudication": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
@@ -1262,6 +1289,9 @@ def _suite_qualification(
             ],
             "verified_trial_ledgers": ledger_validation["verified_trial_count"],
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "target_bound_trials": ledger_validation[
+                "target_bound_trial_count"
+            ],
             "magma_validated_trials": sum(
                 item["valid"] is True for item in magma_validation["trials"]
             ),

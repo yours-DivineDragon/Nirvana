@@ -3,9 +3,9 @@
   "$id": "https://nirvana.security/schemas/benchmark-trial-seal.schema.json",
   "title": "Nirvana benchmark trial ledger seal",
   "type": "object",
-  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256", "coverage_sha256", "coverage"],
+  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256", "target_snapshot_algorithm", "target_snapshot_sha256", "coverage_sha256", "coverage"],
   "properties": {
-    "schema_version": {"const": "1.2.0"},
+    "schema_version": {"const": "1.3.0"},
     "event": {"const": "benchmark_trial_sealed"},
     "trial_id": {"type": "string", "minLength": 1},
     "case_id": {"type": "string", "minLength": 1},
@@ -35,6 +35,8 @@
       }
     },
     "finding_set_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "target_snapshot_algorithm": {"const": "nirvana-intake-scope-v1"},
+    "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "coverage_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "coverage": {
       "type": "object",

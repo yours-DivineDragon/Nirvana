@@ -15,6 +15,7 @@ from nirvana.benchmark_ledger import (
     seal_benchmark_trial,
 )
 from nirvana.evaluation import evaluate_benchmark
+from nirvana.intake import RepositoryIntake
 from nirvana.ledger import EvidenceLedger
 from nirvana.models import EVIDENCE_RANK, EvidenceLevel
 from nirvana.util import sha256_file
@@ -22,10 +23,21 @@ from nirvana.util import sha256_file
 
 class EvaluationTests(unittest.TestCase):
     def bind_trial(
-        self, root: Path, trial: dict, *, assess_novelty: bool = True
+        self,
+        root: Path,
+        trial: dict,
+        *,
+        assess_novelty: bool = True,
+        target_root: Path | None = None,
     ) -> None:
         run_directory = root / "runs" / trial["run_id"]
         run_directory.mkdir(parents=True, exist_ok=True)
+        if target_root is None:
+            target_root = root / "trial-targets" / trial["case_id"]
+            target_root.mkdir(parents=True, exist_ok=True)
+            fixture = target_root / "Fixture.sol"
+            if not fixture.exists():
+                fixture.write_text("contract Fixture {}\n")
         ledger = EvidenceLedger(run_directory / "evidence.jsonl")
         levels = [
             EvidenceLevel(finding["evidence_level"])
@@ -36,36 +48,9 @@ class EvaluationTests(unittest.TestCase):
             key=lambda item: EVIDENCE_RANK[item],
             default=EvidenceLevel.HYPOTHESIS,
         )
-        captured_scope = {
-            "schema_version": "2.0.0",
-            "created_at": "2025-02-01T00:00:00Z",
-            "target_root": str(root),
-            "repository_commit": None,
-            "repository_dirty": False,
-            "target_snapshot_sha256": "a" * 64,
-            "snapshot_complete": True,
-            "max_analysis_file_bytes": 5000000,
-            "files": [],
-            "excluded_directories": [".git"],
-            "toolchains": [],
-            "frameworks": [],
-            "languages": {},
-            "untrusted_instruction_surfaces": [],
-            "build_status": "not_detected",
-            "test_status": "not_detected",
-            "evidence_ceiling": "hypothesis",
-            "dependency_manifests": [],
-            "discovered_artifacts": [],
-            "privileged_identities": [],
-            "upgrade_mechanisms": [],
-            "external_dependencies": [],
-            "build_plan": [],
-            "test_plan": [],
-            "deployment_matches": [],
-            "declared_tool_versions": {},
-            "submodules": [],
-            "warnings": [],
-        }
+        captured_scope = RepositoryIntake().inspect(target_root).to_dict()
+        captured_scope["created_at"] = "2025-02-01T00:00:00Z"
+        captured_scope["evidence_ceiling"] = "hypothesis"
         ledger.append({"event": "scope_captured", "scope": captured_scope})
         coverage_initial = {
             "schema_version": "1.0.0",
@@ -276,7 +261,7 @@ class EvaluationTests(unittest.TestCase):
             "ended_at": "2025-02-01T00:10:00Z",
             "model": "agent-model-version",
             "prompt_sha256": "1" * 64,
-            "tools": ["nirvana-0.4.9", "forge-1"],
+            "tools": ["nirvana-0.4.10", "forge-1"],
             "token_budget": 100000,
             "compute_hours": 0.5,
             "model_cost": 0.0,
@@ -387,12 +372,15 @@ class EvaluationTests(unittest.TestCase):
             },
         }
 
-    def qualified_manifest(self, root: Path) -> dict:
+    def qualified_manifest(
+        self, root: Path, *, mismatched_trial_target: bool = False
+    ) -> dict:
         manifest = self.manifest(root)
         manifest["benchmark_id"] = "qualified-independent-suite-1"
         cases = []
         trials = []
         pack_cases = []
+        targets_by_case: dict[str, Path] = {}
         attestation = root / "case-pack-author-attestation.json"
         attestation.write_text(
             json.dumps({"author": "independent-team", "operator_access": False})
@@ -415,6 +403,7 @@ class EvaluationTests(unittest.TestCase):
             (target / "Fixture.sol").write_text(
                 f"contract Fixture{index} {{ function value() external pure returns (uint) {{ return {index}; }} }}\n"
             )
+            targets_by_case[case_id] = target
             reveal = target.parent / "ground-truth.json"
             reveal.write_text(
                 json.dumps(
@@ -497,7 +486,7 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.9", "forge-1"],
+                        "tools": ["nirvana-0.4.10", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
@@ -519,7 +508,7 @@ class EvaluationTests(unittest.TestCase):
                 )
 
         pack = {
-            "schema_version": "1.3.0",
+            "schema_version": "1.4.0",
             "pack_id": "independent-qualified-pack-1",
             "cutoff": manifest["cutoff"],
             "created_at": "2025-01-20T00:00:00Z",
@@ -552,8 +541,17 @@ class EvaluationTests(unittest.TestCase):
         }
         manifest["cases"] = cases
         manifest["trials"] = trials
-        for trial in trials:
-            self.bind_trial(root, trial)
+        for index, trial in enumerate(trials):
+            target = targets_by_case[trial["case_id"]]
+            if mismatched_trial_target and index == 0:
+                target = root / "operator-target" / trial["case_id"]
+                target.mkdir(parents=True)
+                source = targets_by_case[trial["case_id"]] / "Fixture.sol"
+                (target / "Fixture.sol").write_text(source.read_text())
+                (target / "AUDIT-HINT.md").write_text(
+                    "operator-added hint absent from the committed case target\n"
+                )
+            self.bind_trial(root, trial, target_root=target)
         return manifest
 
     def test_all_pdf_metrics_and_temporal_release_gate_are_computed(self) -> None:
@@ -562,12 +560,23 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.8.0")
+            self.assertEqual(report["schema_version"], "1.9.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertIsNone(report["ground_truth_validation"]["valid"])
             self.assertTrue(report["finding_attribution_validation"]["valid"])
             self.assertTrue(report["ledger_validation"]["valid"])
+            self.assertIsNone(
+                report["ledger_validation"]["trials"][0][
+                    "target_binding_valid"
+                ]
+            )
+            self.assertEqual(
+                report["ledger_validation"]["trials"][0][
+                    "target_snapshot_algorithm"
+                ],
+                TARGET_SNAPSHOT_ALGORITHM,
+            )
             self.assertTrue(report["magma_validation"]["valid"])
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
             self.assertEqual(report["metrics"]["ground_truth_recall"], 1.0)
@@ -669,7 +678,13 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(all(report["suite_qualification"]["checks"].values()))
             self.assertEqual(
                 report["suite_qualification"]["qualification_version"],
-                "nirvana-closed-beta-v5",
+                "nirvana-closed-beta-v6",
+            )
+            self.assertEqual(report["counts"]["target_bound_trials"], 90)
+            self.assertTrue(
+                report["suite_qualification"]["checks"][
+                    "case_targets_match_audited_runs"
+                ]
             )
             self.assertEqual(
                 report["ground_truth_validation"]["matched_kloc_case_count"], 30
@@ -690,6 +705,38 @@ class EvaluationTests(unittest.TestCase):
             )
             self.assertTrue(report["release_gates"]["closed_beta"]["passed"])
             self.assertTrue(report["release_gates"]["production_candidate"]["passed"])
+
+    def test_audited_target_must_match_the_independent_case_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.qualified_manifest(
+                root,
+                mismatched_trial_target=True,
+            )
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIsNone(report["magma"])
+            binding = report["ledger_validation"]["trials"][0]
+            self.assertFalse(binding["target_binding_valid"])
+            self.assertNotEqual(
+                binding["target_snapshot_sha256"],
+                binding["expected_case_target_snapshot_sha256"],
+            )
+            violation = " ".join(binding["violations"])
+            self.assertIn(binding["target_snapshot_sha256"], violation)
+            self.assertIn(
+                binding["expected_case_target_snapshot_sha256"],
+                violation,
+            )
+            self.assertIn("does not match case-pack target snapshot", violation)
+            self.assertFalse(
+                report["suite_qualification"]["checks"][
+                    "case_targets_match_audited_runs"
+                ]
+            )
 
     def test_checkpointed_finding_cannot_be_suppressed_from_precision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

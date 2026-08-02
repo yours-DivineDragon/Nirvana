@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .contracts import validate_contract
+from .intake import RepositoryIntake, TARGET_SNAPSHOT_ALGORITHM
 from .util import (
     atomic_write_json,
     canonical_json,
@@ -14,26 +16,60 @@ from .util import (
     sha256_file,
     utc_now,
 )
-from .verification import snapshot_harness
 
 
 MAX_PACK_BYTES = 256 * 1024 * 1024
 MAX_PACK_ARTIFACT_BYTES = 100 * 1024 * 1024
-TARGET_SNAPSHOT_ALGORITHM = "nirvana-regular-file-tree-v1"
+MAX_PACK_TARGET_FILES = 4096
+MAX_PACK_TARGET_BYTES = 100 * 1024 * 1024
 GROUND_TRUTH_COMMITMENT_ALGORITHM = "sha256-canonical-ground-truth-v1"
 
 
 def benchmark_target_snapshot(target_path: Path) -> dict[str, Any]:
-    snapshot = snapshot_harness(target_path)
+    intake = RepositoryIntake()
+    _validate_target_tree(target_path, intake.ignored_directories)
+    snapshot = intake.target_snapshot(
+        target_path,
+        max_files=MAX_PACK_TARGET_FILES,
+        max_total_bytes=MAX_PACK_TARGET_BYTES,
+    )
     report = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "algorithm": TARGET_SNAPSHOT_ALGORITHM,
-        "target_snapshot_sha256": snapshot.snapshot_sha256,
-        "file_count": snapshot.file_count,
-        "total_bytes": snapshot.total_bytes,
+        "target_snapshot_sha256": snapshot["target_snapshot_sha256"],
+        "file_count": snapshot["file_count"],
+        "total_bytes": snapshot["total_bytes"],
     }
     validate_contract(report, "benchmark-target-snapshot.schema.json")
     return report
+
+
+def _validate_target_tree(
+    target_path: Path,
+    excluded_directories: frozenset[str],
+) -> None:
+    root = target_path.resolve(strict=True)
+    for current_root, directories, filenames in os.walk(root, followlinks=False):
+        current = Path(current_root)
+        retained_directories: list[str] = []
+        for name in sorted(directories):
+            if name in excluded_directories:
+                continue
+            directory = current / name
+            item_stat = directory.lstat()
+            if stat.S_ISLNK(item_stat.st_mode):
+                raise ValueError("benchmark target must not contain symlink directories")
+            if not stat.S_ISDIR(item_stat.st_mode):
+                raise ValueError("benchmark target may contain regular files only")
+            retained_directories.append(name)
+        directories[:] = retained_directories
+        for name in sorted(filenames):
+            item = current / name
+            item_stat = item.lstat()
+            if stat.S_ISLNK(item_stat.st_mode):
+                raise ValueError("benchmark target must not contain symlinks")
+            if not stat.S_ISREG(item_stat.st_mode):
+                raise ValueError("benchmark target may contain regular files only")
 
 
 def canonical_ground_truth_document(
@@ -194,7 +230,7 @@ def verify_case_pack(pack_path: Path) -> dict[str, Any]:
         )
 
     report = {
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "created_at": utc_now(),
         "pack_id": pack["pack_id"],
         "case_pack_sha256": sha256_file(resolved),
