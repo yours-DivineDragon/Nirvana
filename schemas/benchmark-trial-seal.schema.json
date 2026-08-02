@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256"],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "event": {"const": "benchmark_trial_sealed"},
     "trial_id": {"type": "string", "minLength": 1},
     "case_id": {"type": "string", "minLength": 1},
@@ -16,11 +16,15 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["finding_id", "severity", "evidence_level"],
+        "required": ["finding_id", "severity", "evidence_level", "reproducer_evidence_id", "regression_evidence_id", "reproduced", "patch_tests_passed"],
         "properties": {
           "finding_id": {"type": "string", "pattern": "^F-[A-Za-z0-9._-]+$"},
           "severity": {"enum": ["informational", "low", "medium", "high", "critical"]},
-          "evidence_level": {"$ref": "common.schema.json#/$defs/evidenceLevel"}
+          "evidence_level": {"$ref": "common.schema.json#/$defs/evidenceLevel"},
+          "reproducer_evidence_id": {"type": ["string", "null"], "pattern": "^E-[A-Za-z0-9._-]+$"},
+          "regression_evidence_id": {"type": ["string", "null"], "pattern": "^E-[A-Za-z0-9._-]+$"},
+          "reproduced": {"type": "boolean"},
+          "patch_tests_passed": {"type": ["boolean", "null"]}
         },
         "additionalProperties": false
       }

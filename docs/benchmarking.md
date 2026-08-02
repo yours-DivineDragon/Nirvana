@@ -5,10 +5,10 @@ Nirvana separates a valid measurement from a maturity claim. A small or explorat
 `benchmark-report.json` exposes the distinction directly:
 
 - `release_gates.closed_beta.precision_thresholds_met` applies the founding specification's 80% overall and 90% High/Critical precision targets.
-- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v2` operational floors.
+- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v3` operational floors.
 - `release_gates.closed_beta.passed` is true only when both are true.
 
-The v2 operational floors are project policy, not a claim that a particular sample size proves general performance:
+The v3 operational floors are project policy, not a claim that a particular sample size proves general performance:
 
 | Qualification check | Floor |
 |---|---:|
@@ -16,8 +16,10 @@ The v2 operational floors are project policy, not a claim that a particular samp
 | Eligible benign controls | 10 |
 | Distinct integer seeds per eligible case | 3 |
 | Case provenance | Verified independent encrypted case pack and matching reveal commitments |
+| Case sizing | Every KLOC denominator matches its independently authored case-pack value |
 | Finding attribution | Every true positive names committed ground truth; every non-null id belongs to that case |
-| Run provenance | Every trial and complete finding set matches a sealed ledger checkpoint |
+| Run provenance | Every trial and complete finding set matches a sealed ledger checkpoint; confirmed findings cannot be suppressed |
+| Derived outcomes | Reproduction and patch-test state match replay-verified reproducer and regression evidence |
 | High/Critical evidence | Executable or stronger for every report |
 | Trial accounting | Complete tokens, budget, compute, and model cost |
 
@@ -31,7 +33,7 @@ The case-pack author and trial operator must be separated by one of three compar
 2. Builds each canonical ground-truth document from `.agents/skills/nirvana-audit/assets/benchmark-ground-truth.json`. It binds the case id, eligibility, derived vulnerable/benign class, and complete vulnerability label records.
 3. Creates the public commitment, then encrypts that exact ground-truth document for a recipient unavailable to the trial operator. `age` and OpenPGP are the supported contract labels.
 4. Retains an authorship/custody attestation, generator source hash and randomness description.
-5. Hashes each target snapshot, commitment artifact, ciphertext, and attestation in `benchmark-case-pack.json`.
+5. Records each target's KLOC before operator access and hashes each target snapshot, commitment artifact, ciphertext, attestation, and complete `benchmark-case-pack.json`.
 
 Use the shipped helpers rather than `RepositoryIntake`, Git tree hashes, or a hand-rolled directory digest:
 
@@ -43,7 +45,7 @@ nirvana benchmark commit-ground-truth cases/CASE-1/ground-truth.json \
 
 `hash-target` uses the declared `nirvana-regular-file-tree-v1` algorithm: sorted relative regular-file paths, byte sizes, and SHA-256 values encoded as canonical JSON. `commit-ground-truth` uses `sha256-canonical-ground-truth-v1` and emits no labels—only the case id, algorithm, and commitment. Its output prints both values needed by the pack: `public_commitment_sha256` for the canonical reveal and `public_commitment_artifact_sha256` for the commitment file bytes. Remove the plaintext reveal from trial-operator access after encrypting it; retain it with the reveal custodian.
 
-Case-pack schema v1.1 is intentionally incompatible with v1.0 packs, whose public commitment was only an artifact byte hash. Recreate those commitments from the canonical reveal before using them for evaluation.
+Case-pack schema v1.2 requires a non-negative KLOC commitment for every target. It remains intentionally incompatible with v1.0 packs, whose public commitment was only an artifact byte hash; recreate those commitments from the canonical reveal before using them for evaluation.
 
 Start from `.agents/skills/nirvana-audit/assets/benchmark-case-pack.json`, then verify the completed pack:
 
@@ -65,7 +67,7 @@ Reference the verified bytes from the post-reveal benchmark manifest with a rela
 }
 ```
 
-Evaluation re-verifies the pack instead of trusting a prior report. After the trial, populate each manifest case from the revealed canonical document. Evaluation recomputes every commitment from the manifest's `case_id`, `eligible`, derived vulnerable/benign class, and full `ground_truth` list. The pack cutoff, complete case-id set, case origin timestamps, and all reveal commitments must match. Any mismatch is report-level invalidity: metrics and Magma values are null and every gate closes. This prevents a missed vulnerable case from being relabelled benign or ineligible after results are known.
+Evaluation re-verifies the pack instead of trusting a prior report. After the trial, populate each manifest case from the revealed canonical document. Evaluation recomputes every commitment from the manifest's `case_id`, `eligible`, derived vulnerable/benign class, and full `ground_truth` list. The pack cutoff, complete case-id set, case origin timestamps, KLOC values, and all reveal commitments must match. Any mismatch is report-level invalidity: metrics and Magma values are null and every gate closes. This prevents a missed vulnerable case from being relabelled benign or ineligible after results are known, and prevents an operator from shrinking the denominator of per-KLOC yield. A valid pilot without a verified case pack reports per-KLOC yield as undefined.
 
 Adjudication is bound to that same committed label set. A `true_positive` must carry a non-null `ground_truth_id`, and every non-null attribution on any finding must name a vulnerability committed for that case. An unmatched id is a validation violation, never a precision point. This keeps the precision numerator and the recall numerator under the same reveal commitment.
 
@@ -93,7 +95,7 @@ nirvana benchmark seal-trial ./nirvana-runs/<run-id> \
   --output ./nirvana-runs/<run-id>/benchmark-trial-checkpoint.json
 ```
 
-The command derives the complete `finding_confirmed` set from the ledger, records each finding's severity and evidence tier in a `benchmark_trial_sealed` event, refuses missing or currently failed replay evidence, and then checkpoints that seal. It prints the checkpoint artifact SHA-256. Put the relative paths and exact digest into manifest v1.1:
+The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.1 records each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction state, and verified patched-control state in a `benchmark_trial_sealed` event. It refuses missing or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256 and relative paths into manifest v1.2:
 
 ```json
 {
@@ -106,7 +108,7 @@ The command derives the complete `finding_confirmed` set from the ledger, record
 }
 ```
 
-Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, invented findings, omitted checkpointed findings, severity or evidence-tier drift, unverified supporting evidence, and evidence invalidated by a later replay failure. This is a one-to-one binding: an operator cannot quietly omit a checkpointed false positive from the precision denominator. Manifest v1.1 is intentionally incompatible with unbound v1.0 trials.
+Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, invented findings, omitted checkpointed findings, severity or evidence-tier drift, operator-declared reproduction or patch state that differs from the ledger, unverified supporting evidence, and evidence invalidated by a later replay failure. This is a one-to-one binding: every checkpointed finding must be adjudicated `true_positive` or `false_positive`; `suppressed` cannot remove it from the precision denominator. Unconfirmed analyst-queue items stay outside the benchmark finding set. Manifest v1.2 and trial seal v1.1 are intentionally incompatible with older unbound claims.
 
 The checkpoint remains a tamper-evident local commitment until its hash is published to an independent trusted store. Nirvana reports whether the checkpoint contains an `external_anchor`, but does not claim to verify the honesty, independence, or publication time of that outside service.
 

@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "created_at", "benchmark_id", "manifest_sha256", "track", "valid", "temporal_validation", "ground_truth_validation", "finding_attribution_validation", "ledger_validation", "invalid_reasons", "counts", "metrics", "magma", "suite_qualification", "release_gates", "warnings"],
   "properties": {
-    "schema_version": {"const": "1.5.0"},
+    "schema_version": {"const": "1.6.0"},
     "created_at": {"type": "string"},
     "benchmark_id": {"type": "string"},
     "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
