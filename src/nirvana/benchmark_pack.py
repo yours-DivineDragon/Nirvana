@@ -118,6 +118,12 @@ def verify_case_pack(pack_path: Path) -> dict[str, Any]:
         case_ids.add(case_id)
         if _date(case["originated_at"]) <= cutoff:
             raise ValueError(f"case-pack case {case_id} does not originate after cutoff")
+        if _date(case["disclosed_at"]) <= cutoff:
+            raise ValueError(f"case-pack case {case_id} was disclosed before or at cutoff")
+        if case["hidden_variant"] and not case["transformation_log_sha256"]:
+            raise ValueError(
+                f"case-pack hidden variant {case_id} lacks a transformation log hash"
+            )
 
         target = _pack_path(
             root,
@@ -172,6 +178,11 @@ def verify_case_pack(pack_path: Path) -> dict[str, Any]:
             {
                 "case_id": case_id,
                 "originated_at": case["originated_at"],
+                "disclosed_at": case["disclosed_at"],
+                "hidden_variant": case["hidden_variant"],
+                "transformation_log_sha256": case[
+                    "transformation_log_sha256"
+                ],
                 "kloc": case["kloc"],
                 "target_snapshot_sha256": target_snapshot["target_snapshot_sha256"],
                 "public_commitment_sha256": case["public_commitment_sha256"],
@@ -183,7 +194,7 @@ def verify_case_pack(pack_path: Path) -> dict[str, Any]:
         )
 
     report = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.3.0",
         "created_at": utc_now(),
         "pack_id": pack["pack_id"],
         "case_pack_sha256": sha256_file(resolved),

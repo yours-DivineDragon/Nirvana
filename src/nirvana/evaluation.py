@@ -46,11 +46,13 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     )
     finding_attribution_validation = _validate_finding_attribution(cases, trials)
     ledger_validation = validate_trial_ledger_bindings(resolved, trials)
+    magma_validation = _validate_magma_levels(cases, trials, ledger_validation)
     invalid_reasons = [
         *temporal["violations"],
         *ground_truth_validation["violations"],
         *finding_attribution_validation["violations"],
         *ledger_validation["violations"],
+        *magma_validation["violations"],
     ]
     evaluation_valid = not invalid_reasons
     derived_finding_states = {
@@ -216,7 +218,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         },
         "stability": stability,
     }
-    magma = _magma_metrics(trials, eligible_ground_truth)
+    magma = _magma_metrics(magma_validation, eligible_ground_truth)
     precision = metrics["validated_precision"]
     high_precision = metrics["high_severity_precision"]
     release_evidence = _release_evidence(manifest.get("release_evidence", {}))
@@ -237,6 +239,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         ground_truth_validation,
         finding_attribution_validation,
         ledger_validation,
+        magma_validation,
         evaluation_valid,
     )
     closed_beta = precision_thresholds_met and suite_qualification["qualified"]
@@ -347,7 +350,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.7.0",
+        "schema_version": "1.8.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -357,6 +360,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         "ground_truth_validation": ground_truth_validation,
         "finding_attribution_validation": finding_attribution_validation,
         "ledger_validation": ledger_validation,
+        "magma_validation": magma_validation,
         "invalid_reasons": invalid_reasons,
         "counts": {
             "cases": len(cases),
@@ -375,6 +379,9 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             ),
             "committed_kloc_cases": ground_truth_validation[
                 "matched_kloc_case_count"
+            ],
+            "committed_case_metadata_records": ground_truth_validation[
+                "matched_case_metadata_count"
             ],
         },
         "metrics": metrics if evaluation_valid else None,
@@ -421,6 +428,20 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             raise ValueError("benchmark ground_truth must be an array")
         if not isinstance(case["eligible"], bool):
             raise ValueError("benchmark case eligible must be boolean")
+        if not isinstance(case["hidden_variant"], bool):
+            raise ValueError("benchmark case hidden_variant must be boolean")
+        transformation_log = case["transformation_log_sha256"]
+        if transformation_log is not None and (
+            not isinstance(transformation_log, str)
+            or len(transformation_log) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in transformation_log
+            )
+        ):
+            raise ValueError(
+                "benchmark transformation_log_sha256 must be null or a SHA-256 digest"
+            )
         vulnerability_ids: set[str] = set()
         for vulnerability in case["ground_truth"]:
             if {"vulnerability_id", "severity"} - vulnerability.keys():
@@ -484,6 +505,16 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             for value in coverage.values()
         ):
             raise ValueError("benchmark trial coverage values must be between zero and one")
+        for field in ("reached_ids", "triggered_ids", "detected_ids"):
+            identifiers = trial[field]
+            if (
+                not isinstance(identifiers, list)
+                or any(not isinstance(item, str) or not item for item in identifiers)
+                or len(set(identifiers)) != len(identifiers)
+            ):
+                raise ValueError(
+                    f"benchmark trial {field} must be a unique non-empty string array"
+                )
         binding = trial["ledger_checkpoint"]
         required_binding = {
             "algorithm",
@@ -713,6 +744,12 @@ def _validate_revealed_ground_truth(
             "committed_kloc_case_count": 0,
             "matched_kloc_case_count": 0,
             "kloc_mismatched_case_ids": [],
+            "case_metadata_valid": None,
+            "committed_case_metadata_count": 0,
+            "matched_case_metadata_count": 0,
+            "disclosed_at_mismatched_case_ids": [],
+            "hidden_variant_mismatched_case_ids": [],
+            "transformation_log_mismatched_case_ids": [],
             "missing_manifest_case_ids": [],
             "unexpected_manifest_case_ids": [],
             "violations": [],
@@ -732,18 +769,47 @@ def _validate_revealed_ground_truth(
         violations.append(f"benchmark manifest adds uncommitted case: {case_id}")
 
     origin_mismatches: list[str] = []
+    disclosed_at_mismatches: list[str] = []
+    hidden_variant_mismatches: list[str] = []
+    transformation_log_mismatches: list[str] = []
     commitment_mismatches: list[str] = []
     kloc_mismatches: list[str] = []
     matched = 0
     matched_kloc = 0
+    matched_case_metadata = 0
     for case_id in sorted(pack_case_ids & manifest_case_ids):
         case = cases[case_id]
         committed = pack_cases[case_id]
+        case_metadata_matches = True
         if committed["originated_at"] != case["originated_at"]:
+            case_metadata_matches = False
             origin_mismatches.append(case_id)
             violations.append(
                 f"case {case_id} origin timestamp does not match the pre-trial case pack"
             )
+        if committed["disclosed_at"] != case["disclosed_at"]:
+            case_metadata_matches = False
+            disclosed_at_mismatches.append(case_id)
+            violations.append(
+                f"case {case_id} disclosure timestamp does not match the pre-trial case pack"
+            )
+        if committed["hidden_variant"] != case["hidden_variant"]:
+            case_metadata_matches = False
+            hidden_variant_mismatches.append(case_id)
+            violations.append(
+                f"case {case_id} hidden-variant status does not match the pre-trial case pack"
+            )
+        if (
+            committed["transformation_log_sha256"]
+            != case["transformation_log_sha256"]
+        ):
+            case_metadata_matches = False
+            transformation_log_mismatches.append(case_id)
+            violations.append(
+                f"case {case_id} transformation-log hash does not match the pre-trial case pack"
+            )
+        if case_metadata_matches:
+            matched_case_metadata += 1
         if committed["kloc"] != case["kloc"]:
             kloc_mismatches.append(case_id)
             violations.append(
@@ -765,13 +831,16 @@ def _validate_revealed_ground_truth(
         else:
             matched += 1
 
-    metadata_matches = bool(
+    case_metadata_valid = bool(
         case_pack["cutoff"] == manifest["cutoff"]
         and not missing_manifest
         and not unexpected_manifest
         and not origin_mismatches
-        and not kloc_mismatches
+        and not disclosed_at_mismatches
+        and not hidden_variant_mismatches
+        and not transformation_log_mismatches
     )
+    metadata_matches = bool(case_metadata_valid and not kloc_mismatches)
     kloc_valid = not missing_manifest and not unexpected_manifest and not kloc_mismatches
     return {
         "case_pack_declared": True,
@@ -785,6 +854,12 @@ def _validate_revealed_ground_truth(
         "committed_kloc_case_count": len(pack_cases),
         "matched_kloc_case_count": matched_kloc,
         "kloc_mismatched_case_ids": kloc_mismatches,
+        "case_metadata_valid": case_metadata_valid,
+        "committed_case_metadata_count": len(pack_cases),
+        "matched_case_metadata_count": matched_case_metadata,
+        "disclosed_at_mismatched_case_ids": disclosed_at_mismatches,
+        "hidden_variant_mismatched_case_ids": hidden_variant_mismatches,
+        "transformation_log_mismatched_case_ids": transformation_log_mismatches,
         "missing_manifest_case_ids": missing_manifest,
         "unexpected_manifest_case_ids": unexpected_manifest,
         "violations": violations,
@@ -864,6 +939,135 @@ def _validate_finding_attribution(
     }
 
 
+def _validate_magma_levels(
+    cases: dict[str, dict[str, Any]],
+    trials: list[dict[str, Any]],
+    ledger_validation: dict[str, Any],
+) -> dict[str, Any]:
+    ground_truth_by_case = {
+        case_id: {
+            str(vulnerability["vulnerability_id"])
+            for vulnerability in case["ground_truth"]
+        }
+        for case_id, case in cases.items()
+    }
+    ledger_by_trial = {
+        str(item["trial_id"]): item for item in ledger_validation["trials"]
+    }
+    results: list[dict[str, Any]] = []
+    violations: list[str] = []
+    for trial in trials:
+        trial_id = str(trial["trial_id"])
+        case_id = str(trial["case_id"])
+        committed_ids = ground_truth_by_case[case_id]
+        ledger_result = ledger_by_trial.get(trial_id, {})
+        matched_finding_ids = {
+            str(item) for item in ledger_result.get("matched_finding_ids", [])
+        }
+        derived_findings = {
+            str(item["finding_id"]): item
+            for item in ledger_result.get("derived_findings", [])
+        }
+        reached = {str(item) for item in trial["reached_ids"]}
+        triggered = {str(item) for item in trial["triggered_ids"]}
+        declared_detected = {str(item) for item in trial["detected_ids"]}
+        trial_violations: list[str] = []
+
+        for label, identifiers in (
+            ("reached", reached),
+            ("triggered", triggered),
+            ("detected", declared_detected),
+        ):
+            unknown = sorted(identifiers - committed_ids)
+            if unknown:
+                trial_violations.append(
+                    f"trial {trial_id} declares unknown {label} ground-truth ids "
+                    f"for case {case_id}: {unknown}"
+                )
+
+        derived_detected: set[str] = set()
+        evidence_triggered: set[str] = set()
+        for finding in trial["findings"]:
+            finding_id = str(finding["finding_id"])
+            ground_truth_id = finding.get("ground_truth_id")
+            if (
+                finding_id not in matched_finding_ids
+                or not isinstance(ground_truth_id, str)
+                or ground_truth_id not in committed_ids
+            ):
+                continue
+            derived = derived_findings.get(finding_id)
+            if derived is None:
+                continue
+            if finding["verdict"] == "true_positive":
+                derived_detected.add(ground_truth_id)
+            if (
+                derived["reproduced"] is True
+                and _evidence_rank(derived["evidence_level"])
+                >= _evidence_rank(EvidenceLevel.EXECUTABLE.value)
+            ):
+                evidence_triggered.add(ground_truth_id)
+
+        unsupported_detected = sorted(declared_detected - derived_detected)
+        if unsupported_detected:
+            trial_violations.append(
+                f"trial {trial_id} detected ids are not backed by ledger-bound "
+                f"attributed true positives: {unsupported_detected}"
+            )
+        omitted_detected = sorted(derived_detected - declared_detected)
+        if omitted_detected:
+            trial_violations.append(
+                f"trial {trial_id} omits ledger-derived detected ids: "
+                f"{omitted_detected}"
+            )
+
+        required_triggered = derived_detected | evidence_triggered
+        missing_required_triggers = sorted(required_triggered - triggered)
+        if missing_required_triggers:
+            trial_violations.append(
+                f"trial {trial_id} triggered ids omit ledger-demonstrated triggers: "
+                f"{missing_required_triggers}"
+            )
+        detected_without_trigger = sorted(declared_detected - triggered)
+        if detected_without_trigger:
+            trial_violations.append(
+                f"trial {trial_id} violates Magma monotonicity: detected ids must "
+                f"be a subset of triggered ids: {detected_without_trigger}"
+            )
+        triggered_without_reach = sorted(triggered - reached)
+        if triggered_without_reach:
+            trial_violations.append(
+                f"trial {trial_id} violates Magma monotonicity: triggered ids must "
+                f"be a subset of reached ids: {triggered_without_reach}"
+            )
+
+        violations.extend(trial_violations)
+        results.append(
+            {
+                "trial_id": trial_id,
+                "case_id": case_id,
+                "valid": not trial_violations,
+                "declared_reached_ids": sorted(reached),
+                "declared_triggered_ids": sorted(triggered),
+                "declared_detected_ids": sorted(declared_detected),
+                "ledger_required_triggered_ids": sorted(required_triggered),
+                "derived_detected_ids": sorted(derived_detected),
+                "violations": trial_violations,
+            }
+        )
+
+    return {
+        "valid": not violations,
+        "reach_source": "declared",
+        "trigger_source": "declared_with_ledger_lower_bound",
+        "detection_source": "derived_from_ledger_bound_true_positives",
+        "monotonicity_enforced": True,
+        "trial_count": len(trials),
+        "trials": results,
+        "violations": violations,
+    }
+
+
 def _suite_qualification(
     manifest: dict[str, Any],
     cases: dict[str, dict[str, Any]],
@@ -874,6 +1078,7 @@ def _suite_qualification(
     ground_truth_validation: dict[str, Any],
     finding_attribution_validation: dict[str, Any],
     ledger_validation: dict[str, Any],
+    magma_validation: dict[str, Any],
     evaluation_valid: bool,
 ) -> dict[str, Any]:
     eligible = {
@@ -933,11 +1138,16 @@ def _suite_qualification(
         "committed_ground_truth_matches_reveal": ground_truth_validation["valid"]
         is True,
         "committed_case_sizes_match": ground_truth_validation["kloc_valid"] is True,
+        "committed_case_metadata_matches": ground_truth_validation[
+            "case_metadata_valid"
+        ]
+        is True,
         "findings_match_committed_ground_truth": finding_attribution_validation[
             "valid"
         ]
         is True,
         "checkpointed_trial_ledgers": ledger_validation["valid"] is True,
+        "bound_monotonic_magma_levels": magma_validation["valid"] is True,
         "complete_checkpointed_novelty_adjudication": (
             fully_adjudicated_findings == len(derived_findings)
         ),
@@ -971,6 +1181,10 @@ def _suite_qualification(
             "requires every manifest KLOC denominator to match its independently "
             "authored pre-trial case-pack value"
         ),
+        "committed_case_metadata_matches": (
+            "requires disclosure time, hidden-variant status, and transformation-log "
+            "hashes to match the independently authored pre-trial case pack"
+        ),
         "findings_match_committed_ground_truth": (
             "requires every true positive to identify committed ground truth and every "
             "non-null attribution to match that case's committed vulnerability ids"
@@ -978,6 +1192,10 @@ def _suite_qualification(
         "checkpointed_trial_ledgers": (
             "requires every trial and complete finding set to match a verified Nirvana "
             "ledger checkpoint with replay-verified evidence at the claimed tier"
+        ),
+        "bound_monotonic_magma_levels": (
+            "requires ledger-derived detection, ledger-lower-bounded triggering, and "
+            "detected ⊆ triggered ⊆ reached for every trial"
         ),
         "complete_checkpointed_novelty_adjudication": (
             "requires every checkpointed finding to have a corpus-bound novelty "
@@ -993,7 +1211,7 @@ def _suite_qualification(
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v4",
+        "qualification_version": "nirvana-closed-beta-v5",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -1003,7 +1221,9 @@ def _suite_qualification(
             "committed_ground_truth_reveal": True,
             "committed_ground_truth_attribution": True,
             "committed_case_sizes": True,
+            "committed_case_metadata": True,
             "checkpointed_trial_ledgers": True,
+            "bound_monotonic_magma_levels": True,
             "complete_checkpointed_novelty_adjudication": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
             "complete_trial_cost_accounting": True,
@@ -1031,11 +1251,20 @@ def _suite_qualification(
             "matched_kloc_cases": ground_truth_validation[
                 "matched_kloc_case_count"
             ],
+            "committed_case_metadata_records": ground_truth_validation[
+                "committed_case_metadata_count"
+            ],
+            "matched_case_metadata_records": ground_truth_validation[
+                "matched_case_metadata_count"
+            ],
             "attributed_true_positive_findings": finding_attribution_validation[
                 "attributed_true_positive_count"
             ],
             "verified_trial_ledgers": ledger_validation["verified_trial_count"],
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "magma_validated_trials": sum(
+                item["valid"] is True for item in magma_validation["trials"]
+            ),
             "checkpointed_findings_with_novelty_assessments": (
                 fully_adjudicated_findings
             ),
@@ -1097,6 +1326,12 @@ def _validate_temporal_split(manifest: dict[str, Any]) -> dict[str, Any]:
             violations.append(f"case {case['case_id']} accessed the eventual fix")
         if case["hidden_variant"] and not case["transformation_log_sha256"]:
             violations.append(f"hidden variant {case['case_id']} lacks a transformation log hash")
+        if manifest["track"] == "web3_hidden_variants" and not case[
+            "hidden_variant"
+        ]:
+            violations.append(
+                f"hidden-variant track case {case['case_id']} is not marked as a hidden variant"
+            )
     archives_complete = all(
         bool(trial.get("model"))
         and bool(trial.get("prompt_sha256"))
@@ -1120,24 +1355,28 @@ def _validate_temporal_split(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _magma_metrics(
-    trials: list[dict[str, Any]], eligible: set[tuple[str, str]]
+    validation: dict[str, Any], eligible: set[tuple[str, str]]
 ) -> dict[str, Any]:
     reached = {
         (str(trial["case_id"]), str(item))
-        for trial in trials
-        for item in trial["reached_ids"]
+        for trial in validation["trials"]
+        for item in trial["declared_reached_ids"]
     } & eligible
     triggered = {
         (str(trial["case_id"]), str(item))
-        for trial in trials
-        for item in trial["triggered_ids"]
+        for trial in validation["trials"]
+        for item in trial["declared_triggered_ids"]
     } & eligible
     detected = {
         (str(trial["case_id"]), str(item))
-        for trial in trials
-        for item in trial["detected_ids"]
+        for trial in validation["trials"]
+        for item in trial["derived_detected_ids"]
     } & eligible
     return {
+        "reach_source": validation["reach_source"],
+        "trigger_source": validation["trigger_source"],
+        "detection_source": validation["detection_source"],
+        "monotonicity_enforced": validation["monotonicity_enforced"],
         "eligible": len(eligible),
         "reached": len(reached),
         "triggered": len(triggered),
