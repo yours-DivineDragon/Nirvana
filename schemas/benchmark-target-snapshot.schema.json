@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-target-snapshot.schema.json",
+  "title": "Nirvana canonical benchmark target snapshot",
+  "type": "object",
+  "required": ["schema_version", "algorithm", "target_snapshot_sha256", "file_count", "total_bytes"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "algorithm": {"const": "nirvana-regular-file-tree-v1"},
+    "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "file_count": {"type": "integer", "minimum": 1},
+    "total_bytes": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

@@ -43,6 +43,7 @@ class SkillAssetTests(unittest.TestCase):
             "detector-review.json": "detector-review.schema.json",
             "disclosure-agent-context.json": "disclosure-agent-context.schema.json",
             "benchmark-case-pack.json": "benchmark-case-pack.schema.json",
+            "benchmark-ground-truth.json": "benchmark-ground-truth.schema.json",
         }
         for asset, schema in contracts.items():
             with self.subTest(asset=asset):

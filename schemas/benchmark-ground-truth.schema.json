@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-ground-truth.schema.json",
+  "title": "Nirvana canonical revealed benchmark ground truth",
+  "type": "object",
+  "required": ["schema_version", "case_id", "eligible", "classification", "ground_truth"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "case_id": {"type": "string", "minLength": 1},
+    "eligible": {"type": "boolean"},
+    "classification": {"enum": ["vulnerable", "benign"]},
+    "ground_truth": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["vulnerability_id", "severity"],
+        "properties": {
+          "vulnerability_id": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["informational", "low", "medium", "high", "critical"]}
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

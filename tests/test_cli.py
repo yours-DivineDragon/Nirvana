@@ -54,7 +54,7 @@ class CliFailureReportingTests(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertEqual(
                 lines[0],
-                "INVALID benchmark: temporal validation failed; metrics suppressed",
+                "INVALID benchmark: validation failed; metrics suppressed",
             )
             self.assertIn("violation: benchmark is not marked blind", lines)
             self.assertNotIn("precision:", stdout.getvalue())

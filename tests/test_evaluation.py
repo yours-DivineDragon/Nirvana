@@ -3,9 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from nirvana.benchmark_pack import (
+    GROUND_TRUTH_COMMITMENT_ALGORITHM,
+    TARGET_SNAPSHOT_ALGORITHM,
+    benchmark_target_snapshot,
+    canonical_ground_truth_document,
+    write_ground_truth_commitment,
+)
 from nirvana.evaluation import evaluate_benchmark
 from nirvana.util import sha256_file
-from nirvana.verification import snapshot_harness
 
 
 class EvaluationTests(unittest.TestCase):
@@ -144,16 +150,30 @@ class EvaluationTests(unittest.TestCase):
             case_id = f"CASE-{index:03d}"
             vulnerability_id = f"GT-{index:03d}"
             vulnerable = index <= 20
+            ground_truth = (
+                [{"vulnerability_id": vulnerability_id, "severity": "high"}]
+                if vulnerable
+                else []
+            )
             originated_at = "2025-01-15T00:00:00Z"
             target = root / "case-pack-assets" / case_id / "target"
             target.mkdir(parents=True)
             (target / "Fixture.sol").write_text(
                 f"contract Fixture{index} {{ function value() external pure returns (uint) {{ return {index}; }} }}\n"
             )
-            commitment = target.parent / "commitment.json"
-            commitment.write_text(
-                json.dumps({"case_id": case_id, "snapshot_committed": True})
+            reveal = target.parent / "ground-truth.json"
+            reveal.write_text(
+                json.dumps(
+                    canonical_ground_truth_document(
+                        case_id,
+                        True,
+                        ground_truth,
+                    )
+                )
             )
+            commitment = target.parent / "commitment.json"
+            commitment_record = write_ground_truth_commitment(reveal, commitment)
+            reveal.unlink()
             sealed = target.parent / "ground-truth.age"
             sealed.write_text(
                 f"age-encryption.org/v1\nfixture-ciphertext-{case_id}\n"
@@ -163,9 +183,14 @@ class EvaluationTests(unittest.TestCase):
                     "case_id": case_id,
                     "originated_at": originated_at,
                     "target_path": target.relative_to(root).as_posix(),
-                    "target_snapshot_sha256": snapshot_harness(target).snapshot_sha256,
+                    "target_snapshot_sha256": benchmark_target_snapshot(target)[
+                        "target_snapshot_sha256"
+                    ],
                     "public_commitment_path": commitment.relative_to(root).as_posix(),
-                    "public_commitment_sha256": sha256_file(commitment),
+                    "public_commitment_artifact_sha256": sha256_file(commitment),
+                    "public_commitment_sha256": commitment_record[
+                        "public_commitment_sha256"
+                    ],
                     "sealed_ground_truth_path": sealed.relative_to(root).as_posix(),
                     "sealed_ground_truth_sha256": sha256_file(sealed),
                 }
@@ -181,11 +206,7 @@ class EvaluationTests(unittest.TestCase):
                     "hidden_variant": True,
                     "transformation_log_sha256": f"{index % 10}" * 64,
                     "kloc": 1.0,
-                    "ground_truth": (
-                        [{"vulnerability_id": vulnerability_id, "severity": "high"}]
-                        if vulnerable
-                        else []
-                    ),
+                    "ground_truth": ground_truth,
                     "ground_truth_material_blocked": True,
                     "eventual_fix_accessed": False,
                 }
@@ -218,7 +239,7 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.4", "forge-1"],
+                        "tools": ["nirvana-0.4.5", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
@@ -240,10 +261,12 @@ class EvaluationTests(unittest.TestCase):
                 )
 
         pack = {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "pack_id": "independent-qualified-pack-1",
             "cutoff": manifest["cutoff"],
             "created_at": "2025-01-20T00:00:00Z",
+            "target_snapshot_algorithm": TARGET_SNAPSHOT_ALGORITHM,
+            "ground_truth_commitment_algorithm": GROUND_TRUTH_COMMITMENT_ALGORITHM,
             "author_attestation": {
                 "author_id": "independent-team",
                 "independent_from_trial_operator": True,
@@ -279,9 +302,10 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.3.0")
+            self.assertEqual(report["schema_version"], "1.4.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
+            self.assertIsNone(report["ground_truth_validation"]["valid"])
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
             self.assertEqual(report["metrics"]["ground_truth_recall"], 1.0)
             self.assertEqual(report["metrics"]["high_severity_precision"], 1.0)
@@ -331,6 +355,10 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.qualified_manifest(root)))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
+            self.assertTrue(report["ground_truth_validation"]["valid"])
+            self.assertEqual(
+                report["ground_truth_validation"]["matched_case_count"], 30
+            )
             self.assertTrue(report["suite_qualification"]["qualified"])
             self.assertTrue(all(report["suite_qualification"]["checks"].values()))
             self.assertEqual(
@@ -394,6 +422,73 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "reference hash mismatch"):
                 evaluate_benchmark(path)
+
+    def test_vulnerable_case_cannot_be_reclassified_as_benign_after_reveal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.qualified_manifest(root)
+            manifest["cases"][0]["ground_truth"] = []
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIsNone(report["magma"])
+            self.assertEqual(
+                report["ground_truth_validation"]["mismatched_case_ids"],
+                ["CASE-001"],
+            )
+            self.assertIn(
+                "revealed ground truth does not match",
+                " ".join(report["invalid_reasons"]),
+            )
+            self.assertTrue(
+                all(not gate["passed"] for gate in report["release_gates"].values())
+            )
+
+    def test_benign_case_cannot_be_reclassified_as_vulnerable_after_reveal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.qualified_manifest(root)
+            manifest["cases"][20]["ground_truth"] = [
+                {"vulnerability_id": "INVENTED", "severity": "high"}
+            ]
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertEqual(
+                report["ground_truth_validation"]["mismatched_case_ids"],
+                ["CASE-021"],
+            )
+
+    def test_revealed_vulnerability_labels_cannot_change_after_commitment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.qualified_manifest(root)
+            manifest["cases"][0]["ground_truth"][0]["severity"] = "critical"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertEqual(
+                report["ground_truth_validation"]["mismatched_case_ids"],
+                ["CASE-001"],
+            )
+
+    def test_case_eligibility_cannot_change_after_commitment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.qualified_manifest(root)
+            manifest["cases"][0]["eligible"] = False
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertEqual(
+                report["ground_truth_validation"]["mismatched_case_ids"],
+                ["CASE-001"],
+            )
 
 
 if __name__ == "__main__":

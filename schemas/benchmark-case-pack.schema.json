@@ -3,19 +3,21 @@
   "$id": "https://nirvana.security/schemas/benchmark-case-pack.schema.json",
   "title": "Nirvana independently authored blind benchmark case pack",
   "type": "object",
-  "required": ["schema_version", "pack_id", "cutoff", "created_at", "author_attestation", "ground_truth_sealing", "generator", "cases"],
+  "required": ["schema_version", "pack_id", "cutoff", "created_at", "target_snapshot_algorithm", "ground_truth_commitment_algorithm", "author_attestation", "ground_truth_sealing", "generator", "cases"],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "pack_id": {"type": "string", "minLength": 1},
     "cutoff": {"type": "string", "minLength": 1},
     "created_at": {"type": "string", "minLength": 1},
+    "target_snapshot_algorithm": {"const": "nirvana-regular-file-tree-v1"},
+    "ground_truth_commitment_algorithm": {"const": "sha256-canonical-ground-truth-v1"},
     "author_attestation": {
       "type": "object",
       "required": ["author_id", "independent_from_trial_operator", "custody_model", "artifact_path", "artifact_sha256"],
       "properties": {
         "author_id": {"type": "string", "minLength": 1},
         "independent_from_trial_operator": {"const": true},
-        "custody_model": {"enum": ["separate_human", "isolated_session", "external_dataset_curator"]},
+        "custody_model": {"enum": ["separate_human", "separate_org", "escrow"]},
         "artifact_path": {"type": "string", "minLength": 1},
         "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
       },
@@ -46,13 +48,14 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["case_id", "originated_at", "target_path", "target_snapshot_sha256", "public_commitment_path", "public_commitment_sha256", "sealed_ground_truth_path", "sealed_ground_truth_sha256"],
+        "required": ["case_id", "originated_at", "target_path", "target_snapshot_sha256", "public_commitment_path", "public_commitment_artifact_sha256", "public_commitment_sha256", "sealed_ground_truth_path", "sealed_ground_truth_sha256"],
         "properties": {
           "case_id": {"type": "string", "minLength": 1},
           "originated_at": {"type": "string", "minLength": 1},
           "target_path": {"type": "string", "minLength": 1},
           "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "public_commitment_path": {"type": "string", "minLength": 1},
+          "public_commitment_artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "public_commitment_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "sealed_ground_truth_path": {"type": "string", "minLength": 1},
           "sealed_ground_truth_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}

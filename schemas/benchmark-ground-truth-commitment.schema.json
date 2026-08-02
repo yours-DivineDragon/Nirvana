@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-ground-truth-commitment.schema.json",
+  "title": "Nirvana public benchmark ground-truth commitment",
+  "type": "object",
+  "required": ["schema_version", "algorithm", "case_id", "public_commitment_sha256"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "algorithm": {"const": "sha256-canonical-ground-truth-v1"},
+    "case_id": {"type": "string", "minLength": 1},
+    "public_commitment_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}
