@@ -52,11 +52,26 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         *ledger_validation["violations"],
     ]
     evaluation_valid = not invalid_reasons
-    findings = [
-        {**finding, "trial_id": trial["trial_id"], "case_id": trial["case_id"]}
-        for trial in trials
-        for finding in trial["findings"]
-    ]
+    derived_finding_states = {
+        (str(result["trial_id"]), str(finding["finding_id"])): finding
+        for result in ledger_validation["trials"]
+        for finding in result["derived_findings"]
+    }
+    findings: list[dict[str, Any]] = []
+    for trial in trials:
+        for finding in trial["findings"]:
+            item = {
+                **finding,
+                "trial_id": trial["trial_id"],
+                "case_id": trial["case_id"],
+            }
+            derived = derived_finding_states.get(
+                (str(trial["trial_id"]), str(finding["finding_id"]))
+            )
+            if derived is not None:
+                item["reproduced"] = derived["reproduced"]
+                item["patch_tests_passed"] = derived["patch_tests_passed"]
+            findings.append(item)
     eligible_ground_truth = {
         (case_id, str(vulnerability["vulnerability_id"]))
         for case_id, case in cases.items()
@@ -73,7 +88,11 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         for item in findings
         if item["verdict"] == "true_positive" and item.get("ground_truth_id") is not None
     } & eligible_ground_truth
-    reported = [item for item in findings if item["verdict"] != "suppressed"]
+    reported = [
+        item
+        for item in findings
+        if item["verdict"] in {"true_positive", "false_positive"}
+    ]
     true_reports = [
         item
         for item in reported
@@ -101,7 +120,14 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         >= _evidence_rank(EvidenceLevel.STRUCTURALLY_CONFIRMED.value)
     ]
     novel_confirmed = [item for item in confirmed if item.get("novel") is True]
-    total_kloc = sum(float(case["kloc"]) for case in cases.values() if case["eligible"])
+    kloc_is_committed = bool(
+        case_pack is not None and ground_truth_validation["kloc_valid"] is True
+    )
+    total_kloc = (
+        sum(float(case["kloc"]) for case in cases.values() if case["eligible"])
+        if kloc_is_committed
+        else None
+    )
     total_compute = sum(float(item["compute_hours"]) for item in trials)
     total_model_cost = sum(float(item["model_cost"]) for item in trials)
     reproduced = [item for item in confirmed if item.get("reproduced") is True]
@@ -134,7 +160,11 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         "novel_validated_yield": {
             "total": len(novel_confirmed),
             "per_project": _ratio(len(novel_confirmed), len(cases)),
-            "per_kloc": _ratio(len(novel_confirmed), total_kloc),
+            "per_kloc": (
+                _ratio(len(novel_confirmed), total_kloc)
+                if total_kloc is not None
+                else None
+            ),
             "per_compute_hour": _ratio(len(novel_confirmed), total_compute),
             "per_model_cost_unit": _ratio(len(novel_confirmed), total_model_cost),
         },
@@ -274,12 +304,17 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         warnings.append("ground-truth recall is undefined because no eligible vulnerabilities were supplied")
     if not high_reports:
         warnings.append("high-severity precision is undefined because no high/critical reports were emitted")
+    if evaluation_valid and not kloc_is_committed:
+        warnings.append(
+            "per-KLOC yield is undefined because no independently committed case "
+            "sizes were supplied"
+        )
     if evaluation_valid and precision_thresholds_met and not suite_qualification["qualified"]:
         warnings.append(
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.5.0",
+        "schema_version": "1.6.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -295,9 +330,15 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "trials": len(trials),
             "eligible_ground_truth": len(eligible_ground_truth),
             "reported_findings": len(reported),
+            "suppressed_findings": sum(
+                item["verdict"] == "suppressed" for item in findings
+            ),
             "true_reports": len(true_reports),
             "confirmed_true_reports": len(confirmed),
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "committed_kloc_cases": ground_truth_validation[
+                "matched_kloc_case_count"
+            ],
         },
         "metrics": metrics if evaluation_valid else None,
         "magma": magma if evaluation_valid else None,
@@ -443,6 +484,14 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
                 )
             Severity(finding["severity"])
             EvidenceLevel(finding["evidence_level"])
+            if not isinstance(finding["reproduced"], bool):
+                raise ValueError("benchmark finding reproduced must be boolean")
+            if finding["patch_tests_passed"] is not None and not isinstance(
+                finding["patch_tests_passed"], bool
+            ):
+                raise ValueError(
+                    "benchmark finding patch_tests_passed must be boolean or null"
+                )
             confidence = finding["confidence"]
             if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= confidence <= 1:
                 raise ValueError("benchmark finding confidence must be between zero and one")
@@ -585,6 +634,10 @@ def _validate_revealed_ground_truth(
             "committed_case_count": 0,
             "matched_case_count": 0,
             "mismatched_case_ids": [],
+            "kloc_valid": None,
+            "committed_kloc_case_count": 0,
+            "matched_kloc_case_count": 0,
+            "kloc_mismatched_case_ids": [],
             "missing_manifest_case_ids": [],
             "unexpected_manifest_case_ids": [],
             "violations": [],
@@ -605,7 +658,9 @@ def _validate_revealed_ground_truth(
 
     origin_mismatches: list[str] = []
     commitment_mismatches: list[str] = []
+    kloc_mismatches: list[str] = []
     matched = 0
+    matched_kloc = 0
     for case_id in sorted(pack_case_ids & manifest_case_ids):
         case = cases[case_id]
         committed = pack_cases[case_id]
@@ -614,6 +669,13 @@ def _validate_revealed_ground_truth(
             violations.append(
                 f"case {case_id} origin timestamp does not match the pre-trial case pack"
             )
+        if committed["kloc"] != case["kloc"]:
+            kloc_mismatches.append(case_id)
+            violations.append(
+                f"case {case_id} KLOC does not match the pre-trial case pack"
+            )
+        else:
+            matched_kloc += 1
         revealed = canonical_ground_truth_document(
             case_id,
             case["eligible"],
@@ -633,7 +695,9 @@ def _validate_revealed_ground_truth(
         and not missing_manifest
         and not unexpected_manifest
         and not origin_mismatches
+        and not kloc_mismatches
     )
+    kloc_valid = not missing_manifest and not unexpected_manifest and not kloc_mismatches
     return {
         "case_pack_declared": True,
         "algorithm": GROUND_TRUTH_COMMITMENT_ALGORITHM,
@@ -642,6 +706,10 @@ def _validate_revealed_ground_truth(
         "committed_case_count": len(pack_cases),
         "matched_case_count": matched,
         "mismatched_case_ids": commitment_mismatches,
+        "kloc_valid": kloc_valid,
+        "committed_kloc_case_count": len(pack_cases),
+        "matched_kloc_case_count": matched_kloc,
+        "kloc_mismatched_case_ids": kloc_mismatches,
         "missing_manifest_case_ids": missing_manifest,
         "unexpected_manifest_case_ids": unexpected_manifest,
         "violations": violations,
@@ -780,6 +848,7 @@ def _suite_qualification(
         ),
         "committed_ground_truth_matches_reveal": ground_truth_validation["valid"]
         is True,
+        "committed_case_sizes_match": ground_truth_validation["kloc_valid"] is True,
         "findings_match_committed_ground_truth": finding_attribution_validation[
             "valid"
         ]
@@ -811,6 +880,10 @@ def _suite_qualification(
             "requires every revealed eligibility flag, vulnerable/benign class, label, "
             "and ground-truth record to match its pre-trial commitment"
         ),
+        "committed_case_sizes_match": (
+            "requires every manifest KLOC denominator to match its independently "
+            "authored pre-trial case-pack value"
+        ),
         "findings_match_committed_ground_truth": (
             "requires every true positive to identify committed ground truth and every "
             "non-null attribution to match that case's committed vulnerability ids"
@@ -829,7 +902,7 @@ def _suite_qualification(
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v2",
+        "qualification_version": "nirvana-closed-beta-v3",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -838,6 +911,7 @@ def _suite_qualification(
             "independently_authored_encrypted_case_pack": True,
             "committed_ground_truth_reveal": True,
             "committed_ground_truth_attribution": True,
+            "committed_case_sizes": True,
             "checkpointed_trial_ledgers": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
             "complete_trial_cost_accounting": True,
@@ -858,6 +932,12 @@ def _suite_qualification(
             ],
             "matched_ground_truth_commitments": ground_truth_validation[
                 "matched_case_count"
+            ],
+            "committed_kloc_cases": ground_truth_validation[
+                "committed_kloc_case_count"
+            ],
+            "matched_kloc_cases": ground_truth_validation[
+                "matched_kloc_case_count"
             ],
             "attributed_true_positive_findings": finding_attribution_validation[
                 "attributed_true_positive_count"

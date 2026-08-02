@@ -172,6 +172,7 @@ def verify_case_pack(pack_path: Path) -> dict[str, Any]:
             {
                 "case_id": case_id,
                 "originated_at": case["originated_at"],
+                "kloc": case["kloc"],
                 "target_snapshot_sha256": target_snapshot["target_snapshot_sha256"],
                 "public_commitment_sha256": case["public_commitment_sha256"],
                 "public_commitment_artifact_sha256": case[
@@ -182,7 +183,7 @@ def verify_case_pack(pack_path: Path) -> dict[str, Any]:
         )
 
     report = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "created_at": utc_now(),
         "pack_id": pack["pack_id"],
         "case_pack_sha256": sha256_file(resolved),

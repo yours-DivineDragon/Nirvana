@@ -59,12 +59,12 @@ def seal_benchmark_trial(
         raise ValueError("run scope manifest must be one JSON object")
     scope = ScopeManifest.from_dict(scope_value)
     validate_scope_against_ledger(scope, records)
-    findings, _, violations = _checkpointed_findings(records, scope)
+    findings, _, finding_states, violations = _checkpointed_findings(records, scope)
     if violations:
         raise ValueError(
             "benchmark trial findings are not ledger-valid: " + "; ".join(violations)
         )
-    finding_claims = _finding_claims(findings)
+    finding_claims = _finding_claims(findings, finding_states)
     existing_seals = [
         record
         for record in records
@@ -80,6 +80,7 @@ def seal_benchmark_trial(
                 "seed": seed,
             },
             findings,
+            finding_states,
         )
         if seal_violations:
             raise ValueError(
@@ -90,7 +91,7 @@ def seal_benchmark_trial(
         seal_record_hash = existing_seals[0]["record_hash"]
     else:
         seal = {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "event": "benchmark_trial_sealed",
             "trial_id": trial_id,
             "case_id": case_id,
@@ -146,6 +147,7 @@ def validate_trial_ledger_bindings(
                 "externally_anchored": False,
                 "checkpointed_finding_ids": [],
                 "matched_finding_ids": [],
+                "derived_findings": [],
                 "replay_verified_evidence_ids": [],
                 "post_checkpoint_invalidated_evidence_ids": [],
                 "violations": trial_violations,
@@ -228,8 +230,7 @@ def _validate_trial_binding(
         raise ValueError("run scope manifest must be one JSON object")
     scope = ScopeManifest.from_dict(scope_value)
     validate_scope_against_ledger(scope, records)
-
-    findings, replay_verified, semantic_violations = _checkpointed_findings(
+    findings, replay_verified, finding_states, semantic_violations = _checkpointed_findings(
         records, scope
     )
     supporting_evidence = {
@@ -256,7 +257,9 @@ def _validate_trial_binding(
             "in the later ledger: "
             f"{post_checkpoint_invalidated}"
         )
-    seal_sequence, seal_violations = _validate_trial_seal(records, trial, findings)
+    seal_sequence, seal_violations = _validate_trial_seal(
+        records, trial, findings, finding_states
+    )
     semantic_violations.extend(seal_violations)
     claimed = {str(item["finding_id"]): item for item in trial["findings"]}
     checkpointed_ids = set(findings)
@@ -288,6 +291,25 @@ def _validate_trial_binding(
                 "match its checkpointed finding"
             )
             matches = False
+        if claim["verdict"] not in {"true_positive", "false_positive"}:
+            semantic_violations.append(
+                f"trial {trial_id} checkpointed finding {finding_id} cannot be "
+                "suppressed from benchmark adjudication"
+            )
+            matches = False
+        state = finding_states[finding_id]
+        if claim["reproduced"] is not state["reproduced"]:
+            semantic_violations.append(
+                f"trial {trial_id} finding {finding_id} reproduced state does not "
+                "match its checkpointed replay evidence"
+            )
+            matches = False
+        if claim["patch_tests_passed"] is not state["patch_tests_passed"]:
+            semantic_violations.append(
+                f"trial {trial_id} finding {finding_id} patch-test state does not "
+                "match its checkpointed regression evidence"
+            )
+            matches = False
         if matches:
             matched_ids.append(finding_id)
 
@@ -309,6 +331,7 @@ def _validate_trial_binding(
         "externally_anchored": checkpoint.get("external_anchor") is not None,
         "checkpointed_finding_ids": sorted(checkpointed_ids),
         "matched_finding_ids": matched_ids,
+        "derived_findings": _finding_claims(findings, finding_states),
         "replay_verified_evidence_ids": sorted(replay_verified),
         "post_checkpoint_invalidated_evidence_ids": post_checkpoint_invalidated,
         "violations": semantic_violations,
@@ -320,6 +343,7 @@ def _validate_trial_seal(
     records: list[dict[str, Any]],
     trial: dict[str, Any],
     findings: dict[str, Finding],
+    finding_states: dict[str, dict[str, Any]],
 ) -> tuple[int | None, list[str]]:
     trial_id = str(trial["trial_id"])
     matches = [
@@ -359,7 +383,7 @@ def _validate_trial_seal(
         violations.append(
             f"trial {trial_id} was sealed before its run-completed event"
         )
-    expected_claims = _finding_claims(findings)
+    expected_claims = _finding_claims(findings, finding_states)
     expected_digest = sha256_bytes(canonical_json(expected_claims).encode("utf-8"))
     if seal["findings"] != expected_claims:
         violations.append(
@@ -372,12 +396,20 @@ def _validate_trial_seal(
     return int(record["sequence"]), violations
 
 
-def _finding_claims(findings: dict[str, Finding]) -> list[dict[str, str]]:
+def _finding_claims(
+    findings: dict[str, Finding], finding_states: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
     return [
         {
             "finding_id": finding.finding_id,
             "severity": finding.severity.value,
             "evidence_level": finding.evidence_level.value,
+            "reproducer_evidence_id": finding.reproducer_evidence_id,
+            "regression_evidence_id": finding.regression_evidence_id,
+            "reproduced": finding_states[finding.finding_id]["reproduced"],
+            "patch_tests_passed": finding_states[finding.finding_id][
+                "patch_tests_passed"
+            ],
         }
         for finding in sorted(findings.values(), key=lambda item: item.finding_id)
     ]
@@ -385,7 +417,12 @@ def _finding_claims(findings: dict[str, Finding]) -> list[dict[str, str]]:
 
 def _checkpointed_findings(
     records: list[dict[str, Any]], scope: ScopeManifest
-) -> tuple[dict[str, Finding], set[str], list[str]]:
+) -> tuple[
+    dict[str, Finding],
+    set[str],
+    dict[str, dict[str, Any]],
+    list[str],
+]:
     evidence: dict[str, EvidenceRecord] = {}
     latest_replay: dict[str, str] = {}
     findings: dict[str, Finding] = {}
@@ -433,7 +470,33 @@ def _checkpointed_findings(
         if status == "evidence_verified"
     }
     violations: list[str] = []
+    finding_states: dict[str, dict[str, Any]] = {}
     for finding_id, finding in findings.items():
+        reproducer = (
+            evidence.get(finding.reproducer_evidence_id)
+            if finding.reproducer_evidence_id is not None
+            else None
+        )
+        regression = (
+            evidence.get(finding.regression_evidence_id)
+            if finding.regression_evidence_id is not None
+            else None
+        )
+        finding_states[finding_id] = {
+            "reproduced": bool(
+                reproducer is not None
+                and finding.reproducer_evidence_id in currently_verified
+            ),
+            "patch_tests_passed": (
+                None
+                if finding.regression_evidence_id is None
+                else bool(
+                    regression is not None
+                    and finding.regression_evidence_id in currently_verified
+                    and regression.metadata.get("negative_control_verified") is True
+                )
+            ),
+        }
         supporting = set(finding.supporting_evidence)
         unknown = sorted(supporting - evidence.keys())
         if unknown:
@@ -470,6 +533,26 @@ def _checkpointed_findings(
             violations.append(
                 f"checkpointed finding {finding_id} exceeded the run evidence ceiling when confirmed"
             )
+        if reproducer is not None:
+            if EVIDENCE_RANK[reproducer.level] < EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
+                violations.append(
+                    f"checkpointed finding {finding_id} reproducer evidence is not executable"
+                )
+            if reproducer.metadata.get("negative_control_verified") is not True:
+                violations.append(
+                    f"checkpointed finding {finding_id} reproducer evidence lacks a "
+                    "runner-verified negative control"
+                )
+        if regression is not None:
+            if EVIDENCE_RANK[regression.level] < EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]:
+                violations.append(
+                    f"checkpointed finding {finding_id} regression evidence is not executable"
+                )
+            if regression.metadata.get("negative_control_verified") is not True:
+                violations.append(
+                    f"checkpointed finding {finding_id} regression evidence lacks a "
+                    "verified patched-target control"
+                )
     if EVIDENCE_RANK[scope.evidence_ceiling] < max(
         (EVIDENCE_RANK[item.evidence_level] for item in findings.values()),
         default=0,
@@ -477,7 +560,7 @@ def _checkpointed_findings(
         violations.append(
             "checkpointed findings exceed the ledger-derived run evidence ceiling"
         )
-    return findings, currently_verified, violations
+    return findings, currently_verified, finding_states, violations
 
 
 def _relative_path(

@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "benchmark_id", "cutoff", "track", "blind", "corpora", "cases", "trials"],
   "properties": {
-    "schema_version": {"const": "1.1.0"},
+    "schema_version": {"const": "1.2.0"},
     "benchmark_id": {"type": "string", "minLength": 1},
     "cutoff": {"type": "string", "minLength": 1},
     "track": {"enum": ["historical_web3", "web3_exploit", "web3_hidden_variants", "solana_move", "native_jvm", "fuzzing", "continuous_discovery", "patch_quality", "novel_discovery"]},

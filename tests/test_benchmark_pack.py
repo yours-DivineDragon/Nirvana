@@ -42,7 +42,7 @@ class BenchmarkCasePackTests(unittest.TestCase):
         sealed = target.parent / "ground-truth.age"
         sealed.write_text("age-encryption.org/v1\nfixture-ciphertext\n")
         pack = {
-            "schema_version": "1.1.0",
+            "schema_version": "1.2.0",
             "pack_id": "independent-pack-1",
             "cutoff": "2024-12-31T00:00:00Z",
             "created_at": "2025-01-20T00:00:00Z",
@@ -69,6 +69,7 @@ class BenchmarkCasePackTests(unittest.TestCase):
                 {
                     "case_id": "CASE-1",
                     "originated_at": "2025-01-15T00:00:00Z",
+                    "kloc": 1.0,
                     "target_path": target.relative_to(root).as_posix(),
                     "target_snapshot_sha256": benchmark_target_snapshot(target)[
                         "target_snapshot_sha256"
@@ -92,7 +93,8 @@ class BenchmarkCasePackTests(unittest.TestCase):
             path = self.write_pack(Path(directory))
             report = verify_case_pack(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.1.0")
+            self.assertEqual(report["schema_version"], "1.2.0")
+            self.assertEqual(report["cases"][0]["kloc"], 1.0)
             self.assertTrue(report["independent"])
             self.assertEqual(report["case_ids"], ["CASE-1"])
             self.assertEqual(report["case_pack_sha256"], sha256_file(path))
@@ -103,6 +105,16 @@ class BenchmarkCasePackTests(unittest.TestCase):
             path = self.write_pack(root)
             (root / "cases" / "CASE-1" / "commitment.json").write_text("changed")
             with self.assertRaisesRegex(ValueError, "commitment artifact hash mismatch"):
+                verify_case_pack(path)
+
+    def test_case_pack_requires_a_committed_kloc_denominator(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self.write_pack(root)
+            pack = json.loads(path.read_text())
+            del pack["cases"][0]["kloc"]
+            path.write_text(json.dumps(pack))
+            with self.assertRaisesRegex(ValueError, "kloc"):
                 verify_case_pack(path)
 
     def test_case_pack_commitment_value_mismatch_fails_closed(self) -> None:

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "pack_id": "REPLACE-WITH-INDEPENDENT-PACK-ID",
   "cutoff": "2025-01-01T00:00:00Z",
   "created_at": "2025-02-01T00:00:00Z",
@@ -26,6 +26,7 @@
     {
       "case_id": "CASE-REPLACE-ME",
       "originated_at": "2025-01-15T00:00:00Z",
+      "kloc": 1.0,
       "target_path": "cases/CASE-REPLACE-ME/target",
       "target_snapshot_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "public_commitment_path": "cases/CASE-REPLACE-ME/commitment.json",
