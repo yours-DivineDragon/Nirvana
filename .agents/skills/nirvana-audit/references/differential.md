@@ -16,7 +16,7 @@ Prove normalization separately. Normalize only behavior the specification declar
 
 Set at least two repeated runs per implementation so flakes are not mistaken for semantic divergence. Use a fixed `fuzz_seed` and bounded `fuzz_cases` for deterministic JSON mutation; preserve the canonical corpus separately.
 
-The report is valid only when every scheduled execution runs to completion and produces normalizable output. Blocked, timed-out, or unnormalizable executions invalidate agreement and mismatch counts. Import gates re-derive the schedule and validity from cross-field execution facts and reject a self-declared `valid` value that conflicts with them. A non-zero return with a valid normalized output remains part of the observable contract and may itself be the divergence. Preserve invalid reports for diagnosis, but do not attach, classify, or disclose them.
+Keep validity fail-closed at the harness level: require complete schedule accounting, at least one normalizable execution, and no block, timeout, or flake. When every implementation rejects one input with unnormalizable output, retain an `unnormalizable` case record and exclude it from comparison. When only some implementations normalize, retain the case as a mismatch. Import gates re-derive schedule, case, and validity facts and reject a self-declared `valid` value that conflicts with them. A non-zero return with a valid normalized output remains part of the observable contract and may itself be the divergence. Preserve invalid reports for diagnosis, but do not attach, classify, or disclose them.
 
 ## Generate cases
 

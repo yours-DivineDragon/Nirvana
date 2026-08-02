@@ -13,6 +13,7 @@ from nirvana.policy import CommandResult, CommandRunner, ExecutionMode, Executio
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "differential"
+EXAMPLE = Path(__file__).parents[1] / "examples" / "differential"
 
 
 class DifferentialTests(unittest.TestCase):
@@ -44,9 +45,11 @@ class DifferentialTests(unittest.TestCase):
             [item["language"] for item in report.implementations], ["python", "python"]
         )
         self.assertTrue(all(item["source_sha256"] for item in report.implementations))
-        self.assertEqual(report.to_dict()["schema_version"], "2.1.0")
+        self.assertEqual(report.to_dict()["schema_version"], "2.2.0")
         self.assertTrue(report.valid)
         self.assertEqual(report.successful_executions, report.scheduled_executions)
+        self.assertEqual(report.unnormalizable_executions, 0)
+        self.assertEqual(report.unnormalizable_case_count, 0)
         self.assertEqual(report.invalid_reasons, [])
         self.assertEqual(report.mismatches[0].input, {"value": 3})
         self.assertTrue(report.mismatches[0].outcomes[0].stdout_base64)
@@ -69,6 +72,31 @@ class DifferentialTests(unittest.TestCase):
             [item.case_id for item in second.mismatches],
         )
 
+    def test_shipped_fuzz_example_keeps_agreed_rejections_at_case_level(self) -> None:
+        policy = ExecutionPolicy(
+            allow_host_execution=True, accept_host_network_risk=True
+        )
+        report = compare(
+            DifferentialManifest.load(EXAMPLE / "manifest.toml"),
+            CommandRunner(policy, ExecutionMode.HOST),
+        )
+
+        self.assertTrue(report.valid)
+        self.assertEqual(report.scheduled_executions, 60)
+        self.assertEqual(report.successful_executions, 54)
+        self.assertEqual(report.unnormalizable_executions, 6)
+        self.assertEqual(report.case_count, 10)
+        self.assertEqual(report.comparable_case_count, 9)
+        self.assertEqual(report.unnormalizable_case_count, 1)
+        self.assertEqual(
+            [item.case_id for item in report.mismatches],
+            ["odd", "fuzz-000002-f32d4354", "fuzz-000006-8c3abc33"],
+        )
+        rejected = report.to_dict()["unnormalizable_cases"][0]
+        self.assertEqual(rejected["status"], "unnormalizable")
+        self.assertEqual(rejected["input"], {})
+        self.assertEqual(rejected["case_id"], "fuzz-000001-44136fa3")
+
     def test_repeated_runs_flag_flaky_implementations(self) -> None:
         manifest = DifferentialManifest.load(FIXTURE / "manifest.toml")
         runner = CommandRunner(ExecutionPolicy(), ExecutionMode.DENY)
@@ -84,12 +112,20 @@ class DifferentialTests(unittest.TestCase):
             report = compare(manifest, runner)
 
         self.assertEqual(report.flaky_executions, 2)
+        self.assertFalse(report.valid)
+        self.assertIn("non-deterministic", " ".join(report.invalid_reasons))
         self.assertTrue(
             all(
                 any(outcome.flaky for outcome in mismatch.outcomes)
                 for mismatch in report.mismatches
             )
         )
+        tampered = report.to_dict()
+        tampered["flaky_executions"] = 0
+        tampered["valid"] = True
+        tampered["invalid_reasons"] = []
+        with self.assertRaisesRegex(ValueError, "flaky execution count conflicts"):
+            validate_differential_report_consistency(tampered)
 
     def test_nonzero_normalized_result_remains_a_comparable_outcome(self) -> None:
         manifest = DifferentialManifest.load(FIXTURE / "manifest.toml")
@@ -110,6 +146,30 @@ class DifferentialTests(unittest.TestCase):
         self.assertTrue(report.valid)
         self.assertEqual(report.successful_executions, report.scheduled_executions)
         self.assertTrue(report.mismatches)
+
+    def test_crash_versus_normal_output_is_a_valid_mismatch(self) -> None:
+        manifest = DifferentialManifest.load(FIXTURE / "manifest.toml")
+        runner = CommandRunner(ExecutionPolicy(), ExecutionMode.DENY)
+
+        def asymmetric_rejection(command, _cwd, _stdin):
+            if command[-1] == "implementation_a.py":
+                return CommandResult(command, 0, b'{"result":"accepted"}\n', b"", 1)
+            return CommandResult(command, 1, b"Traceback: rejected\n", b"", 1)
+
+        with patch.object(runner, "run", side_effect=asymmetric_rejection):
+            report = compare(manifest, runner)
+
+        self.assertTrue(report.valid)
+        self.assertEqual(report.successful_executions, 4)
+        self.assertEqual(report.unnormalizable_executions, 4)
+        self.assertEqual(report.unnormalizable_case_count, 0)
+        self.assertEqual(len(report.mismatches), 2)
+        self.assertTrue(
+            all(
+                any(outcome.normalized_output is None for outcome in mismatch.outcomes)
+                for mismatch in report.mismatches
+            )
+        )
 
     def test_report_validity_is_derived_from_cross_field_execution_facts(self) -> None:
         manifest = DifferentialManifest.load(FIXTURE / "manifest.toml")
@@ -132,6 +192,19 @@ class DifferentialTests(unittest.TestCase):
         valid["scheduled_executions"] += 1
         with self.assertRaisesRegex(ValueError, "scheduled execution count conflicts"):
             validate_differential_report_consistency(valid)
+
+        fuzzed = compare(
+            DifferentialManifest.load(EXAMPLE / "manifest.toml"),
+            CommandRunner(
+                ExecutionPolicy(
+                    allow_host_execution=True, accept_host_network_risk=True
+                ),
+                ExecutionMode.HOST,
+            ),
+        ).to_dict()
+        fuzzed["unnormalizable_case_count"] = 0
+        with self.assertRaisesRegex(ValueError, "unnormalizable case count conflicts"):
+            validate_differential_report_consistency(fuzzed)
 
     def test_fuzz_budget_shortfall_is_reported(self) -> None:
         manifest = replace(

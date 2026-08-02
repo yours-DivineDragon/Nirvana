@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import validate_contract
-from .models import DifferentialMismatch, DifferentialOutcome
+from .models import (
+    DifferentialMismatch,
+    DifferentialOutcome,
+    DifferentialUnnormalizableCase,
+)
 from .policy import CommandRunner
 from .util import canonical_json, jsonable, sha256_bytes, sha256_file, utc_now
 from .verification import policy_sha256
@@ -180,10 +184,15 @@ class DifferentialReport:
     repetitions: int
     fuzz_seed: int
     mismatches: list[DifferentialMismatch]
+    comparable_case_count: int
+    unnormalizable_case_count: int
+    unnormalizable_cases: list[DifferentialUnnormalizableCase]
     valid: bool
     scheduled_executions: int
     successful_executions: int
+    unnormalizable_executions: int
     blocked_executions: int
+    timed_out_executions: int
     flaky_executions: int
     truncated_transcripts: int
     invalid_reasons: list[str]
@@ -221,30 +230,35 @@ def validate_differential_report_consistency(value: dict[str, Any]) -> None:
 
     scheduled = int(value["scheduled_executions"])
     successful = int(value["successful_executions"])
+    unnormalizable = int(value["unnormalizable_executions"])
     blocked = int(value["blocked_executions"])
+    timed_out = int(value["timed_out_executions"])
     expected_scheduled = case_count * len(implementation_names) * repetitions
     if scheduled != expected_scheduled:
         raise ValueError(
             "differential report scheduled execution count conflicts with cases, "
             "implementations, and repetitions"
         )
-    if successful > scheduled:
+    if successful + unnormalizable + blocked + timed_out != scheduled:
         raise ValueError(
-            "differential report successful execution count exceeds its schedule"
-        )
-    if blocked > scheduled - successful:
-        raise ValueError(
-            "differential report blocked execution count exceeds incomplete executions"
+            "differential report execution outcome counts do not cover its schedule"
         )
 
     execution_slots = case_count * len(implementation_names)
-    if int(value["flaky_executions"]) > execution_slots:
+    flaky = int(value["flaky_executions"])
+    if flaky > execution_slots:
         raise ValueError("differential report flaky execution count is impossible")
     if int(value["truncated_transcripts"]) > execution_slots:
         raise ValueError("differential report truncated transcript count is impossible")
 
-    execution_facts_are_valid = (
-        scheduled > 0 and successful == scheduled and blocked == 0
+    execution_facts_are_valid = all(
+        (
+            scheduled > 0,
+            successful > 0,
+            blocked == 0,
+            timed_out == 0,
+            flaky == 0,
+        )
     )
     if bool(value["valid"]) != execution_facts_are_valid:
         raise ValueError(
@@ -256,29 +270,93 @@ def validate_differential_report_consistency(value: dict[str, Any]) -> None:
     if not execution_facts_are_valid and not invalid_reasons:
         raise ValueError("invalid differential report requires at least one reason")
 
+    comparable_cases = int(value["comparable_case_count"])
+    unnormalizable_case_count = int(value["unnormalizable_case_count"])
+    unnormalizable_cases = value["unnormalizable_cases"]
+    if unnormalizable_case_count != len(unnormalizable_cases):
+        raise ValueError(
+            "differential report unnormalizable case count conflicts with its records"
+        )
+    if comparable_cases + unnormalizable_case_count != case_count:
+        raise ValueError(
+            "differential report comparable and unnormalizable case counts do not cover its cases"
+        )
+
     mismatch_ids: set[str] = set()
+    unnormalizable_ids: set[str] = set()
     expected_implementations = set(implementation_names)
     mismatches = value["mismatches"]
-    if len(mismatches) > case_count:
-        raise ValueError("differential report has more mismatches than cases")
-    for mismatch in mismatches:
-        case_id = str(mismatch["case_id"])
-        if case_id in mismatch_ids:
-            raise ValueError(f"duplicate differential mismatch case: {case_id}")
-        mismatch_ids.add(case_id)
-        outcome_names = [str(item["implementation"]) for item in mismatch["outcomes"]]
+    if len(mismatches) > comparable_cases:
+        raise ValueError("differential report has more mismatches than comparable cases")
+
+    def validate_outcomes(record: dict[str, Any], label: str) -> list[dict[str, Any]]:
+        outcomes = record["outcomes"]
+        outcome_names = [str(item["implementation"]) for item in outcomes]
         if (
             len(set(outcome_names)) != len(outcome_names)
             or set(outcome_names) != expected_implementations
         ):
             raise ValueError(
-                f"differential mismatch {case_id} does not contain exactly one outcome "
+                f"{label} does not contain exactly one outcome "
                 "for every implementation"
             )
-        if any(int(item["run_count"]) != repetitions for item in mismatch["outcomes"]):
+        if any(int(item["run_count"]) != repetitions for item in outcomes):
             raise ValueError(
-                f"differential mismatch {case_id} outcome run count conflicts with repetitions"
+                f"{label} outcome run count conflicts with repetitions"
             )
+        return outcomes
+
+    recorded_unnormalizable_executions = 0
+    recorded_flaky_outcomes = 0
+    for record in unnormalizable_cases:
+        case_id = str(record["case_id"])
+        if case_id in unnormalizable_ids:
+            raise ValueError(f"duplicate unnormalizable differential case: {case_id}")
+        unnormalizable_ids.add(case_id)
+        outcomes = validate_outcomes(record, f"unnormalizable differential case {case_id}")
+        if any(
+            item["normalized_output"] is not None
+            or not _is_normalization_error(item["error"])
+            or bool(item["flaky"])
+            for item in outcomes
+        ):
+            raise ValueError(
+                f"unnormalizable differential case {case_id} contains a comparable or unstable outcome"
+            )
+        recorded_unnormalizable_executions += len(outcomes) * repetitions
+
+    for mismatch in mismatches:
+        case_id = str(mismatch["case_id"])
+        if case_id in mismatch_ids:
+            raise ValueError(f"duplicate differential mismatch case: {case_id}")
+        if case_id in unnormalizable_ids:
+            raise ValueError(
+                f"differential case {case_id} cannot be both a mismatch and unnormalizable"
+            )
+        mismatch_ids.add(case_id)
+        outcomes = validate_outcomes(mismatch, f"differential mismatch {case_id}")
+        for item in outcomes:
+            if bool(item["flaky"]):
+                recorded_flaky_outcomes += 1
+            if (
+                not bool(item["flaky"])
+                and item["normalized_output"] is None
+                and _is_normalization_error(item["error"])
+            ):
+                recorded_unnormalizable_executions += repetitions
+
+    if recorded_flaky_outcomes != flaky:
+        raise ValueError(
+            "differential report flaky execution count conflicts with its case outcomes"
+        )
+    if flaky == 0 and recorded_unnormalizable_executions != unnormalizable:
+        raise ValueError(
+            "differential report unnormalizable execution count conflicts with its case outcomes"
+        )
+    if recorded_unnormalizable_executions > unnormalizable:
+        raise ValueError(
+            "differential report records more unnormalizable outcomes than its execution count"
+        )
 
 
 def compare(manifest: DifferentialManifest, runner: CommandRunner) -> DifferentialReport:
@@ -293,10 +371,11 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
         )
     cases = corpus_cases + fuzzed
     mismatches: list[DifferentialMismatch] = []
+    unnormalizable_cases: list[DifferentialUnnormalizableCase] = []
     blocked = 0
     successful = 0
     timed_out = 0
-    normalization_failures = 0
+    unnormalizable = 0
     flaky = 0
     truncated = 0
     for case in cases:
@@ -313,18 +392,21 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                 results.append(result)
                 if result.blocked_reason:
                     blocked += 1
-                normalized, normalization_error = _normalize(result.stdout, manifest.normalizer)
-                error = result.blocked_reason or normalization_error
-                if result.timed_out:
+                    normalized = None
+                    error = result.blocked_reason
+                elif result.timed_out:
+                    normalized = None
                     error = "execution timed out"
                     timed_out += 1
-                elif result.blocked_reason is None and normalization_error is not None:
-                    normalization_failures += 1
-                elif result.blocked_reason is None:
-                    # The return code is part of the observable contract. A
-                    # non-zero result with normalizable output can be a valid
-                    # implementation outcome (and often the divergence).
-                    successful += 1
+                else:
+                    normalized, error = _normalize(result.stdout, manifest.normalizer)
+                    if error is not None:
+                        unnormalizable += 1
+                    else:
+                        # The return code is part of the observable contract. A
+                        # non-zero result with normalizable output can be a valid
+                        # implementation outcome (and often the divergence).
+                        successful += 1
                 observations.append((result.return_code, normalized, error))
             unique_observations = {
                 (return_code, normalized, error)
@@ -363,10 +445,34 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
                     error="flaky implementation output" if outcome_is_flaky else error,
                 )
             )
-        if len(implementation_signatures) > 1 or case_is_flaky:
+        all_implementations_rejected = (
+            not case_is_flaky
+            and all(
+                outcome.normalized_output is None
+                and _is_normalization_error(outcome.error)
+                for outcome in outcomes
+            )
+        )
+        if all_implementations_rejected:
+            unnormalizable_cases.append(
+                DifferentialUnnormalizableCase(
+                    case_id=case_id,
+                    input_sha256=sha256_bytes(input_bytes),
+                    outcomes=outcomes,
+                    input=copy.deepcopy(case["input"]),
+                    notes=[
+                        "No implementation produced normalizable output; the case is agreement-on-rejection and was excluded from comparison."
+                    ],
+                )
+            )
+        elif len(implementation_signatures) > 1 or case_is_flaky:
             notes = ["Classify only after ruling out comparator and harness defects."]
             if case_is_flaky:
                 notes.append("At least one implementation was non-deterministic across repeated runs.")
+            elif any(outcome.normalized_output is None for outcome in outcomes):
+                notes.append(
+                    "Some implementations produced normalizable output while others rejected the input."
+                )
             mismatches.append(
                 DifferentialMismatch(
                     case_id=case_id,
@@ -381,27 +487,43 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
             f"{truncated} implementation transcripts were truncated to {MAX_TRANSCRIPT_BYTES} bytes; full-stream hashes remain recorded"
         )
     scheduled = len(cases) * len(manifest.implementations) * manifest.repetitions
+    comparable_case_count = len(cases) - len(unnormalizable_cases)
+    if unnormalizable_cases:
+        warnings.append(
+            f"{len(unnormalizable_cases)} cases were agreement-on-rejection and excluded from comparison"
+        )
     invalid_reasons: list[str] = []
     if blocked:
         invalid_reasons.append(f"{blocked} scheduled executions were blocked by policy")
     if timed_out:
         invalid_reasons.append(f"{timed_out} scheduled executions timed out")
-    if normalization_failures:
+    if flaky:
         invalid_reasons.append(
-            f"{normalization_failures} scheduled executions produced output the comparator could not normalize"
+            f"{flaky} implementation outcomes were non-deterministic across repetitions"
         )
-    if successful != scheduled and not invalid_reasons:
+    if successful == 0:
         invalid_reasons.append(
-            f"only {successful} of {scheduled} scheduled executions completed successfully"
+            "zero scheduled executions produced normalizable output"
         )
-    valid = successful == scheduled
+    if successful + unnormalizable + blocked + timed_out != scheduled:
+        invalid_reasons.append("execution outcome accounting did not cover the schedule")
+    valid = all(
+        (
+            scheduled > 0,
+            successful > 0,
+            blocked == 0,
+            timed_out == 0,
+            flaky == 0,
+            successful + unnormalizable + blocked + timed_out == scheduled,
+        )
+    )
     if not valid:
         warnings.insert(
             0,
             "differential report is invalid; mismatch and agreement counts are diagnostic only",
         )
     return DifferentialReport(
-        schema_version="2.1.0",
+        schema_version="2.2.0",
         created_at=utc_now(),
         spec_sha256=sha256_file(manifest.spec),
         corpus_sha256=sha256_file(manifest.corpus),
@@ -429,10 +551,15 @@ def compare(manifest: DifferentialManifest, runner: CommandRunner) -> Differenti
         repetitions=manifest.repetitions,
         fuzz_seed=manifest.fuzz_seed,
         mismatches=mismatches,
+        comparable_case_count=comparable_case_count,
+        unnormalizable_case_count=len(unnormalizable_cases),
+        unnormalizable_cases=unnormalizable_cases,
         valid=valid,
         scheduled_executions=scheduled,
         successful_executions=successful,
+        unnormalizable_executions=unnormalizable,
         blocked_executions=blocked,
+        timed_out_executions=timed_out,
         flaky_executions=flaky,
         truncated_transcripts=truncated,
         invalid_reasons=invalid_reasons,
@@ -515,8 +642,14 @@ def _execute_input(
         ]
         observations: list[tuple[int | None, str | None, str | None]] = []
         for result in results:
-            normalized, error = _normalize(result.stdout, manifest.normalizer)
-            error = result.blocked_reason or ("execution timed out" if result.timed_out else error)
+            if result.blocked_reason:
+                normalized = None
+                error = result.blocked_reason
+            elif result.timed_out:
+                normalized = None
+                error = "execution timed out"
+            else:
+                normalized, error = _normalize(result.stdout, manifest.normalizer)
             observations.append((result.return_code, normalized, error))
         unique = set(observations)
         flaky = len(unique) > 1
@@ -547,7 +680,19 @@ def _execute_input(
                 error="flaky implementation output" if flaky else error,
             )
         )
-    return outcomes, len(signatures) > 1 or any_flaky, any_flaky
+    all_implementations_rejected = (
+        not any_flaky
+        and all(
+            outcome.normalized_output is None
+            and _is_normalization_error(outcome.error)
+            for outcome in outcomes
+        )
+    )
+    return (
+        outcomes,
+        not all_implementations_rejected and (len(signatures) > 1 or any_flaky),
+        any_flaky,
+    )
 
 
 def _reduction_candidates(value: Any) -> list[Any]:
@@ -681,6 +826,12 @@ def _normalize(output: bytes, mode: str) -> tuple[str | None, str | None]:
         return canonical_json(json.loads(text)), None
     except json.JSONDecodeError as error:
         return None, f"stdout is not one JSON value: {error.msg}"
+
+
+def _is_normalization_error(error: Any) -> bool:
+    return isinstance(error, str) and error.startswith(
+        ("stdout is not UTF-8", "stdout is not one JSON value:")
+    )
 
 
 def _within(root: Path, candidate: Path) -> Path:

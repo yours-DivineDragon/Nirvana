@@ -86,7 +86,7 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
                 "Independent implementations of the pinned specification must agree on observable behaviour"
             ),
             suspected_violation=(
-                f"Differential case {mismatch['case_id']} produced distinct normalized outcomes"
+                f"Differential case {mismatch['case_id']} produced distinct observable outcomes"
             ),
             affected_assets=["specification-defined protocol behaviour"],
             required_attacker_capabilities=["supply the divergent input or reach an equivalent state"],

@@ -59,7 +59,11 @@ class CliFailureReportingTests(unittest.TestCase):
             self.assertIn("violation: benchmark is not marked blind", lines)
             self.assertNotIn("precision:", stdout.getvalue())
             self.assertTrue(output.is_file())
-            self.assertFalse(json.loads(output.read_text())["valid"])
+            report = json.loads(output.read_text())
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIsNone(report["magma"])
+            self.assertIn("benchmark is not marked blind", report["invalid_reasons"])
 
 
 if __name__ == "__main__":
