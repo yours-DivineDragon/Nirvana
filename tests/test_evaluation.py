@@ -261,8 +261,9 @@ class EvaluationTests(unittest.TestCase):
             "ended_at": "2025-02-01T00:10:00Z",
             "model": "agent-model-version",
             "prompt_sha256": "1" * 64,
-            "tools": ["nirvana-0.4.10", "forge-1"],
+            "tools": ["nirvana-0.4.11", "forge-1"],
             "token_budget": 100000,
+            "worker_count": 3,
             "compute_hours": 0.5,
             "model_cost": 0.0,
             "transcript_sha256": "2" * 64,
@@ -315,7 +316,7 @@ class EvaluationTests(unittest.TestCase):
                 }
             )
         return {
-            "schema_version": "1.4.0",
+            "schema_version": "1.5.0",
             "benchmark_id": "blind-temporal-1",
             "cutoff": "2024-12-31T00:00:00Z",
             "track": "web3_hidden_variants",
@@ -486,10 +487,11 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.10", "forge-1"],
+                        "tools": ["nirvana-0.4.11", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
+                        "worker_count": 1,
                         "compute_hours": 0.1,
                         "model_cost": 0.01,
                         "transcript_sha256": "2" * 64,
@@ -560,7 +562,7 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.9.0")
+            self.assertEqual(report["schema_version"], "1.10.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertIsNone(report["ground_truth_validation"]["valid"])
@@ -663,6 +665,53 @@ class EvaluationTests(unittest.TestCase):
             )
             self.assertIn("post-dates cutoff", " ".join(report["warnings"]))
 
+    def test_trial_end_must_follow_start(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["ended_at"] = "2025-01-31T23:59:59Z"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "ended_at must be later than started_at",
+            ):
+                evaluate_benchmark(path)
+
+    def test_compute_hours_must_fit_wall_clock_worker_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            trial = manifest["trials"][0]
+            trial["compute_hours"] = 0.500001
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "compute_hours exceeds its wall-clock worker capacity",
+            ):
+                evaluate_benchmark(path)
+
+    def test_compute_hours_and_worker_count_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = self.manifest(root)
+            manifest = json.loads(json.dumps(original))
+            path = root / "benchmark.json"
+
+            manifest["trials"][0]["compute_hours"] = 0
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "compute_hours"):
+                evaluate_benchmark(path)
+
+            manifest = json.loads(json.dumps(original))
+            manifest["trials"][0]["worker_count"] = 0
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "worker_count"):
+                evaluate_benchmark(path)
+
     def test_independent_multi_case_suite_can_pass_closed_beta(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -678,7 +727,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(all(report["suite_qualification"]["checks"].values()))
             self.assertEqual(
                 report["suite_qualification"]["qualification_version"],
-                "nirvana-closed-beta-v6",
+                "nirvana-closed-beta-v7",
             )
             self.assertEqual(report["counts"]["target_bound_trials"], 90)
             self.assertTrue(
@@ -702,6 +751,18 @@ class EvaluationTests(unittest.TestCase):
                     "minimum_distinct_seeds_per_eligible_case"
                 ],
                 3,
+            )
+            self.assertAlmostEqual(
+                report["suite_qualification"]["observed"][
+                    "total_declared_compute_hours"
+                ],
+                9.0,
+            )
+            self.assertAlmostEqual(
+                report["suite_qualification"]["observed"][
+                    "total_wall_clock_worker_capacity_hours"
+                ],
+                15.0,
             )
             self.assertTrue(report["release_gates"]["closed_beta"]["passed"])
             self.assertTrue(report["release_gates"]["production_candidate"]["passed"])

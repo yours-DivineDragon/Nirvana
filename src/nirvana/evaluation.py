@@ -365,7 +365,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.9.0",
+        "schema_version": "1.10.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -484,9 +484,9 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
         required = {
             "trial_id", "case_id", "run_id", "seed", "started_at", "ended_at",
             "model", "prompt_sha256", "tools", "token_budget", "compute_hours",
-            "model_cost", "transcript_sha256", "environment_sha256", "findings",
-            "coverage", "coverage_sha256", "reached_ids", "triggered_ids", "detected_ids",
-            "ledger_checkpoint",
+            "worker_count", "model_cost", "transcript_sha256", "environment_sha256",
+            "findings", "coverage", "coverage_sha256", "reached_ids",
+            "triggered_ids", "detected_ids", "ledger_checkpoint",
         }
         missing = required - trial.keys()
         if missing:
@@ -501,6 +501,46 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
         if trial["run_id"] in run_ids:
             raise ValueError(f"duplicate benchmark run id: {trial['run_id']}")
         run_ids.add(trial["run_id"])
+        try:
+            started_at = _date(trial["started_at"])
+            ended_at = _date(trial["ended_at"])
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "benchmark trial started_at and ended_at must be ISO-8601 timestamps"
+            ) from error
+        if ended_at <= started_at:
+            raise ValueError(
+                "benchmark trial ended_at must be later than started_at"
+            )
+        worker_count = trial["worker_count"]
+        if (
+            not isinstance(worker_count, int)
+            or isinstance(worker_count, bool)
+            or worker_count < 1
+        ):
+            raise ValueError("benchmark worker_count must be a positive integer")
+        compute_hours = trial["compute_hours"]
+        if (
+            not isinstance(compute_hours, (int, float))
+            or isinstance(compute_hours, bool)
+            or (
+                isinstance(compute_hours, float)
+                and not math.isfinite(compute_hours)
+            )
+            or compute_hours <= 0
+        ):
+            raise ValueError(
+                "benchmark compute_hours must be a positive finite number"
+            )
+        wall_clock_hours = (ended_at - started_at).total_seconds() / 3600
+        worker_capacity_hours = wall_clock_hours * worker_count
+        if compute_hours > worker_capacity_hours:
+            raise ValueError(
+                f"benchmark trial {trial['trial_id']} compute_hours exceeds its "
+                "wall-clock worker capacity: "
+                f"{compute_hours} > {worker_capacity_hours} "
+                f"({wall_clock_hours} hours x {worker_count} workers)"
+            )
         coverage_sha256 = trial["coverage_sha256"]
         if (
             not isinstance(coverage_sha256, str)
@@ -560,9 +600,18 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             trial["cost_accounting_complete"], bool
         ):
             raise ValueError("benchmark cost_accounting_complete must be boolean")
-        for field in ("compute_hours", "model_cost"):
-            if not isinstance(trial[field], (int, float)) or isinstance(trial[field], bool) or trial[field] < 0:
-                raise ValueError(f"benchmark {field} must be a non-negative number")
+        if (
+            not isinstance(trial["model_cost"], (int, float))
+            or isinstance(trial["model_cost"], bool)
+            or (
+                isinstance(trial["model_cost"], float)
+                and not math.isfinite(trial["model_cost"])
+            )
+            or trial["model_cost"] < 0
+        ):
+            raise ValueError(
+                "benchmark model_cost must be a non-negative finite number"
+            )
         finding_ids: set[str] = set()
         for finding in trial["findings"]:
             required_finding = {
@@ -1127,6 +1176,12 @@ def _suite_qualification(
         for item in high_reports
     )
     fully_accounted_trials = sum(_trial_costs_complete(trial) for trial in trials)
+    total_declared_compute_hours = sum(
+        float(trial["compute_hours"]) for trial in trials
+    )
+    total_wall_clock_worker_capacity_hours = sum(
+        _trial_worker_capacity_hours(trial) for trial in trials
+    )
     derived_findings = [
         finding
         for trial_result in ledger_validation["trials"]
@@ -1232,12 +1287,12 @@ def _suite_qualification(
         ),
         "complete_trial_cost_accounting": (
             "requires every trial to declare complete accounting, tokens used within a "
-            "non-zero budget, compute hours, and model cost"
+            "non-zero budget, positive worker-bounded compute hours, and model cost"
         ),
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v6",
+        "qualification_version": "nirvana-closed-beta-v7",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -1253,6 +1308,8 @@ def _suite_qualification(
             "bound_monotonic_magma_levels": True,
             "complete_checkpointed_novelty_adjudication": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
+            "positive_worker_count": True,
+            "compute_hours_within_wall_clock_worker_capacity": True,
             "complete_trial_cost_accounting": True,
         },
         "observed": {
@@ -1263,6 +1320,10 @@ def _suite_qualification(
             "high_critical_reports_with_actionable_evidence": actionable_high_reports,
             "trials": len(trials),
             "fully_accounted_trials": fully_accounted_trials,
+            "total_declared_compute_hours": total_declared_compute_hours,
+            "total_wall_clock_worker_capacity_hours": (
+                total_wall_clock_worker_capacity_hours
+            ),
             "case_pack_declared": manifest.get("case_pack") is not None,
             "case_pack_verified": case_pack is not None,
             "case_pack_matches_manifest": pack_matches_manifest,
@@ -1330,9 +1391,30 @@ def _trial_costs_complete(trial: dict[str, Any]) -> bool:
         and tokens_used <= token_budget
         and isinstance(trial.get("compute_hours"), (int, float))
         and not isinstance(trial.get("compute_hours"), bool)
+        and (
+            not isinstance(trial["compute_hours"], float)
+            or math.isfinite(trial["compute_hours"])
+        )
+        and trial["compute_hours"] > 0
+        and isinstance(trial.get("worker_count"), int)
+        and not isinstance(trial.get("worker_count"), bool)
+        and trial["worker_count"] > 0
+        and trial["compute_hours"] <= _trial_worker_capacity_hours(trial)
         and isinstance(trial.get("model_cost"), (int, float))
         and not isinstance(trial.get("model_cost"), bool)
+        and (
+            not isinstance(trial["model_cost"], float)
+            or math.isfinite(trial["model_cost"])
+        )
+        and trial["model_cost"] >= 0
     )
+
+
+def _trial_worker_capacity_hours(trial: dict[str, Any]) -> float:
+    wall_clock_hours = (
+        _date(trial["ended_at"]) - _date(trial["started_at"])
+    ).total_seconds() / 3600
+    return wall_clock_hours * int(trial["worker_count"])
 
 
 def _validate_temporal_split(manifest: dict[str, Any]) -> dict[str, Any]:
