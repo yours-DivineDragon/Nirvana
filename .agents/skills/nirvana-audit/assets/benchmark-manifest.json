@@ -52,7 +52,7 @@
       "ended_at": "2025-02-15T01:00:00Z",
       "model": "REPLACE-WITH-EXACT-MODEL",
       "prompt_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "tools": ["nirvana-0.4.11"],
+      "tools": ["nirvana-0.4.12"],
       "token_budget": 100000,
       "tokens_used": 0,
       "cost_accounting_complete": false,

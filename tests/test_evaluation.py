@@ -22,6 +22,101 @@ from nirvana.util import sha256_file
 
 
 class EvaluationTests(unittest.TestCase):
+    @staticmethod
+    def write_execution_receipt(
+        run_directory: Path,
+        evidence_id: str,
+        hypothesis_id: str,
+        evidence_level: str,
+        filename: str,
+        *,
+        replay_of: str | None = None,
+    ) -> tuple[Path, str]:
+        assertion = {
+            "assertion_id": "fixture-result",
+            "passed": True,
+            "observed_sha256": None,
+            "error": None,
+        }
+
+        def result(duration_ms: int) -> dict:
+            return {
+                "command": ["fixture-verifier"],
+                "adapter_outcome": "success",
+                "return_code": 0,
+                "stdout_sha256": "0" * 64,
+                "stderr_sha256": "0" * 64,
+                "stdout_base64": "",
+                "stderr_base64": "",
+                "duration_ms": duration_ms,
+                "blocked_reason": None,
+                "timed_out": False,
+                "assertions": [assertion],
+                "control_invariants": [],
+            }
+
+        receipt = {
+            "schema_version": "1.5.0",
+            "created_at": "2025-02-01T00:01:00Z",
+            "evidence_id": evidence_id,
+            "target": {
+                "root": "/fixture-target",
+                "snapshot_sha256": "a" * 64,
+            },
+            "runner": {
+                "mode": "docker",
+                "policy_sha256": "b" * 64,
+                "docker_image": "fixture@sha256:" + "c" * 64,
+                "adapter_contract": "pytest@1",
+            },
+            "harness": None,
+            "negative_control": {
+                "target": {
+                    "root": "/fixture-control",
+                    "snapshot_sha256": "d" * 64,
+                },
+                "changed_files": [
+                    {
+                        "path": "Fixture.sol",
+                        "target_sha256": "e" * 64,
+                        "control_sha256": "f" * 64,
+                    }
+                ],
+                "expected_return_codes": [0],
+                "result": result(247),
+            },
+            "request": {
+                "evidence_id": evidence_id,
+                "hypothesis_id": hypothesis_id,
+                "evidence_level": evidence_level,
+                "kind": "benchmark-fixture",
+                "summary": "replay-verified benchmark fixture evidence",
+                "adapter": "pytest",
+                "claim": {"security_property": "fixture property"},
+                "assertions": [{"assertion_id": "fixture-result"}],
+                "control_invariants": [],
+                "command": ["fixture-verifier"],
+                "cwd": ".",
+                "expected_return_codes": [0],
+                "replay_mode": "assertions",
+                "tool_version": "fixture-1",
+                "assumptions": [],
+                "harness": None,
+                "negative_control": {"path": "Fixture.sol"},
+                "impact": None,
+                "formal": None,
+                "stdin_base64": "",
+                "stdin_sha256": "0" * 64,
+            },
+            "result": result(285),
+        }
+        if replay_of is not None:
+            receipt["replay_of"] = replay_of
+        artifact = run_directory / "artifacts" / evidence_id / filename
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(json.dumps(receipt))
+        return artifact.resolve(), sha256_file(artifact)
+
     def bind_trial(
         self,
         root: Path,
@@ -97,6 +192,21 @@ class EvaluationTests(unittest.TestCase):
             suffix = finding["finding_id"].removeprefix("F-")
             evidence_id = f"E-{suffix}"
             level = EvidenceLevel(finding["evidence_level"])
+            artifact, artifact_sha256 = self.write_execution_receipt(
+                run_directory,
+                evidence_id,
+                f"H-{suffix}",
+                level.value,
+                "execution.json",
+            )
+            replay_artifact, replay_artifact_sha256 = self.write_execution_receipt(
+                run_directory,
+                evidence_id,
+                f"H-{suffix}",
+                level.value,
+                "replay-1.json",
+                replay_of=artifact_sha256,
+            )
             evidence_record = {
                 "evidence_id": evidence_id,
                 "hypothesis_id": f"H-{suffix}",
@@ -104,8 +214,8 @@ class EvaluationTests(unittest.TestCase):
                 "kind": "benchmark-fixture",
                 "summary": "replay-verified benchmark fixture evidence",
                 "source": "nirvana:command-runner",
-                "artifact_path": str(run_directory / f"{evidence_id}.json"),
-                "artifact_sha256": "b" * 64,
+                "artifact_path": str(artifact),
+                "artifact_sha256": artifact_sha256,
                 "command": (
                     ["fixture-verifier"]
                     if EVIDENCE_RANK[level]
@@ -117,6 +227,8 @@ class EvaluationTests(unittest.TestCase):
                 "metadata": {
                     "runner_minted": True,
                     "negative_control_verified": True,
+                    "duration_ms": 285,
+                    "negative_control_duration_ms": 247,
                 },
                 "created_at": "2025-02-01T00:01:00Z",
             }
@@ -131,6 +243,9 @@ class EvaluationTests(unittest.TestCase):
                 {
                     "event": "evidence_verified",
                     "evidence_id": evidence_id,
+                    "original_artifact_sha256": artifact_sha256,
+                    "replay_artifact_path": str(replay_artifact),
+                    "replay_artifact_sha256": replay_artifact_sha256,
                 }
             )
             finding_payloads.append(
@@ -261,7 +376,7 @@ class EvaluationTests(unittest.TestCase):
             "ended_at": "2025-02-01T00:10:00Z",
             "model": "agent-model-version",
             "prompt_sha256": "1" * 64,
-            "tools": ["nirvana-0.4.11", "forge-1"],
+            "tools": ["nirvana-0.4.12", "forge-1"],
             "token_budget": 100000,
             "worker_count": 3,
             "compute_hours": 0.5,
@@ -487,7 +602,7 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.11", "forge-1"],
+                        "tools": ["nirvana-0.4.12", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
@@ -562,7 +677,7 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.10.0")
+            self.assertEqual(report["schema_version"], "1.11.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertIsNone(report["ground_truth_validation"]["valid"])
@@ -578,6 +693,24 @@ class EvaluationTests(unittest.TestCase):
                     "target_snapshot_algorithm"
                 ],
                 TARGET_SNAPSHOT_ALGORITHM,
+            )
+            receipt_runtime = report["ledger_validation"]["trials"][0][
+                "execution_receipt_runtime"
+            ]
+            self.assertEqual(
+                receipt_runtime["algorithm"],
+                "nirvana-checkpointed-execution-receipts-v1",
+            )
+            self.assertEqual(receipt_runtime["receipt_count"], 2)
+            self.assertEqual(receipt_runtime["execution_duration_ms"], 1064)
+            self.assertAlmostEqual(
+                receipt_runtime["minimum_compute_hours"],
+                1064 / 3_600_000,
+            )
+            self.assertEqual(report["counts"]["checkpointed_execution_receipts"], 4)
+            self.assertEqual(
+                report["ledger_validation"]["compute_floor_source"],
+                "derived_from_checkpointed_execution_receipts",
             )
             self.assertTrue(report["magma_validation"]["valid"])
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
@@ -712,6 +845,58 @@ class EvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "worker_count"):
                 evaluate_benchmark(path)
 
+    def test_compute_hours_must_cover_checkpointed_receipt_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["compute_hours"] = 0.000001
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIsNone(report["magma"])
+            trial_binding = report["ledger_validation"]["trials"][0]
+            receipt_runtime = trial_binding["execution_receipt_runtime"]
+            self.assertEqual(receipt_runtime["execution_duration_ms"], 1064)
+            self.assertIn(
+                "below its checkpointed execution-receipt floor",
+                " ".join(trial_binding["violations"]),
+            )
+            self.assertFalse(
+                report["suite_qualification"]["checks"][
+                    "checkpointed_receipt_compute_floors"
+                ]
+            )
+
+            manifest["trials"][0]["compute_hours"] = receipt_runtime[
+                "minimum_compute_hours"
+            ]
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertTrue(report["valid"])
+            self.assertTrue(report["ledger_validation"]["valid"])
+
+    def test_checkpointed_receipt_hash_is_reverified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            artifact = root / "runs" / "RUN-1" / "artifacts" / "E-1" / "execution.json"
+            receipt = json.loads(artifact.read_text())
+            receipt["result"]["duration_ms"] = 1
+            artifact.write_text(json.dumps(receipt))
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIn(
+                "execution receipt hash mismatch",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
     def test_independent_multi_case_suite_can_pass_closed_beta(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -727,7 +912,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(all(report["suite_qualification"]["checks"].values()))
             self.assertEqual(
                 report["suite_qualification"]["qualification_version"],
-                "nirvana-closed-beta-v7",
+                "nirvana-closed-beta-v8",
             )
             self.assertEqual(report["counts"]["target_bound_trials"], 90)
             self.assertTrue(

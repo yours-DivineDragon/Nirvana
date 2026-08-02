@@ -365,7 +365,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.10.0",
+        "schema_version": "1.11.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -390,6 +390,12 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
             "target_bound_trials": ledger_validation[
                 "target_bound_trial_count"
+            ],
+            "checkpointed_execution_receipts": ledger_validation[
+                "execution_receipt_count"
+            ],
+            "checkpointed_execution_duration_ms": ledger_validation[
+                "execution_receipt_duration_ms"
             ],
             "novelty_assessed_findings": sum(
                 item.get("novelty_classification") is not None
@@ -1175,7 +1181,26 @@ def _suite_qualification(
         >= _evidence_rank(EvidenceLevel.EXECUTABLE.value)
         for item in high_reports
     )
-    fully_accounted_trials = sum(_trial_costs_complete(trial) for trial in trials)
+    receipt_floor_by_trial = {
+        str(result["trial_id"]): float(
+            result["execution_receipt_runtime"]["minimum_compute_hours"]
+        )
+        for result in ledger_validation["trials"]
+        if result["execution_receipt_runtime"] is not None
+    }
+    receipt_floor_bound_trials = sum(
+        str(trial["trial_id"]) in receipt_floor_by_trial
+        and float(trial["compute_hours"])
+        >= receipt_floor_by_trial[str(trial["trial_id"])]
+        for trial in trials
+    )
+    fully_accounted_trials = sum(
+        _trial_costs_complete(
+            trial,
+            receipt_floor_by_trial.get(str(trial["trial_id"])),
+        )
+        for trial in trials
+    )
     total_declared_compute_hours = sum(
         float(trial["compute_hours"]) for trial in trials
     )
@@ -1231,6 +1256,9 @@ def _suite_qualification(
         "actionable_high_critical_evidence": actionable_high_reports
         == len(high_reports),
         "complete_trial_cost_accounting": fully_accounted_trials == len(trials),
+        "checkpointed_receipt_compute_floors": (
+            receipt_floor_bound_trials == len(trials)
+        ),
     }
     reason_by_check = {
         "valid_blind_temporal_suite": "requires a valid blind temporal suite",
@@ -1287,12 +1315,17 @@ def _suite_qualification(
         ),
         "complete_trial_cost_accounting": (
             "requires every trial to declare complete accounting, tokens used within a "
-            "non-zero budget, positive worker-bounded compute hours, and model cost"
+            "non-zero budget, compute hours within checkpointed receipt and wall-clock "
+            "worker bounds, and model cost"
+        ),
+        "checkpointed_receipt_compute_floors": (
+            "requires every trial's declared compute hours to cover all distinct "
+            "checkpointed execution-receipt durations"
         ),
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v7",
+        "qualification_version": "nirvana-closed-beta-v8",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -1310,6 +1343,7 @@ def _suite_qualification(
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
             "positive_worker_count": True,
             "compute_hours_within_wall_clock_worker_capacity": True,
+            "compute_hours_at_or_above_checkpointed_receipt_runtime": True,
             "complete_trial_cost_accounting": True,
         },
         "observed": {
@@ -1324,6 +1358,18 @@ def _suite_qualification(
             "total_wall_clock_worker_capacity_hours": (
                 total_wall_clock_worker_capacity_hours
             ),
+            "trials_meeting_checkpointed_receipt_compute_floor": (
+                receipt_floor_bound_trials
+            ),
+            "total_checkpointed_execution_receipts": ledger_validation[
+                "execution_receipt_count"
+            ],
+            "total_checkpointed_execution_duration_ms": ledger_validation[
+                "execution_receipt_duration_ms"
+            ],
+            "total_minimum_compute_hours": ledger_validation[
+                "minimum_compute_hours"
+            ],
             "case_pack_declared": manifest.get("case_pack") is not None,
             "case_pack_verified": case_pack is not None,
             "case_pack_matches_manifest": pack_matches_manifest,
@@ -1377,7 +1423,9 @@ def _suite_qualification(
     }
 
 
-def _trial_costs_complete(trial: dict[str, Any]) -> bool:
+def _trial_costs_complete(
+    trial: dict[str, Any], minimum_compute_hours: float | None
+) -> bool:
     tokens_used = trial.get("tokens_used")
     token_budget = trial.get("token_budget")
     return bool(
@@ -1396,6 +1444,8 @@ def _trial_costs_complete(trial: dict[str, Any]) -> bool:
             or math.isfinite(trial["compute_hours"])
         )
         and trial["compute_hours"] > 0
+        and minimum_compute_hours is not None
+        and trial["compute_hours"] >= minimum_compute_hours
         and isinstance(trial.get("worker_count"), int)
         and not isinstance(trial.get("worker_count"), bool)
         and trial["worker_count"] > 0

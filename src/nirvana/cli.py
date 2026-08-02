@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.11")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.12")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -502,6 +502,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     "coverage values: "
                     + json.dumps(sealed["seal"]["coverage"], sort_keys=True)
+                )
+                receipt_runtime = sealed["seal"]["execution_receipt_runtime"]
+                print(
+                    "checkpointed execution receipts: "
+                    f"{receipt_runtime['receipt_count']}; "
+                    f"runtime: {receipt_runtime['execution_duration_ms']} ms"
+                )
+                print(
+                    "minimum compute hours: "
+                    f"{receipt_runtime['minimum_compute_hours']}"
                 )
                 return 0
             if args.benchmark_command == "verify-pack":
