@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "pack_id": "REPLACE-WITH-INDEPENDENT-PACK-ID",
+  "cutoff": "2025-01-01T00:00:00Z",
+  "created_at": "2025-02-01T00:00:00Z",
+  "author_attestation": {
+    "author_id": "REPLACE-WITH-INDEPENDENT-AUTHOR",
+    "independent_from_trial_operator": true,
+    "custody_model": "separate_human",
+    "artifact_path": "attestations/independent-author.json",
+    "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "ground_truth_sealing": {
+    "method": "age",
+    "recipient_fingerprint": "REPLACE-WITH-RECIPIENT-FINGERPRINT"
+  },
+  "generator": {
+    "name": "REPLACE-WITH-GENERATOR",
+    "version": "REPLACE-WITH-GENERATOR-VERSION",
+    "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "randomness": "REPLACE-WITH-RANDOMNESS-SOURCE"
+  },
+  "cases": [
+    {
+      "case_id": "CASE-REPLACE-ME",
+      "originated_at": "2025-01-15T00:00:00Z",
+      "target_path": "cases/CASE-REPLACE-ME/target",
+      "target_snapshot_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "public_commitment_path": "cases/CASE-REPLACE-ME/commitment.json",
+      "public_commitment_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sealed_ground_truth_path": "cases/CASE-REPLACE-ME/ground-truth.age",
+      "sealed_ground_truth_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ]
+}

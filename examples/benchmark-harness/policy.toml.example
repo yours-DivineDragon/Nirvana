@@ -1,0 +1,23 @@
+[execution]
+allow_host_execution = false
+accept_host_network_risk = false
+allow_network = false
+allow_git_writes = false
+allow_live_chain = false
+allow_secret_environment = false
+timeout_seconds = 120
+max_output_bytes = 1000000
+docker_user = "65532:65532"
+docker_work_bytes = 1073741824
+docker_image = "ghcr.io/foundry-rs/foundry@sha256:REPLACE_WITH_REVIEWED_64_HEX_DIGEST"
+environment_allowlist = ["LANG", "LC_ALL", "PATH"]
+
+[execution.container_environment]
+HOME = "/work/home"
+TMPDIR = "/work/tmp"
+XDG_CACHE_HOME = "/work/cache"
+FOUNDRY_OUT = "/work/foundry-out"
+FOUNDRY_CACHE_PATH = "/work/foundry-cache"
+PYTHONPYCACHEPREFIX = "/work/python-cache"
+PYTEST_ADDOPTS = "-p no:cacheprovider"
+NO_COLOR = "1"

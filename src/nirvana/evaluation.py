@@ -9,9 +9,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from .benchmark_pack import resolve_case_pack_reference, verify_case_pack
 from .contracts import validate_contract
 from .models import EvidenceLevel, Severity
 from .util import atomic_write_json, sha256_file, utc_now
+
+
+MINIMUM_VULNERABLE_CASES = 20
+MINIMUM_BENIGN_CONTROLS = 10
+MINIMUM_DISTINCT_SEEDS_PER_CASE = 3
 
 
 def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
@@ -26,6 +32,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     temporal = _validate_temporal_split(manifest)
     cases = {str(item["case_id"]): item for item in manifest["cases"]}
     trials = list(manifest["trials"])
+    case_pack = _verified_case_pack(manifest, resolved)
     findings = [
         {**finding, "trial_id": trial["trial_id"], "case_id": trial["case_id"]}
         for trial in trials
@@ -119,14 +126,22 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     precision = metrics["validated_precision"]
     high_precision = metrics["high_severity_precision"]
     release_evidence = _release_evidence(manifest.get("release_evidence", {}))
-    closed_beta = (
+    precision_thresholds_met = (
         temporal["valid"]
-        and manifest["blind"] is True
         and precision is not None
         and precision >= 0.80
         and high_precision is not None
         and high_precision >= 0.90
     )
+    suite_qualification = _suite_qualification(
+        manifest,
+        cases,
+        trials,
+        high_reports,
+        temporal,
+        case_pack,
+    )
+    closed_beta = precision_thresholds_met and suite_qualification["qualified"]
     research_prototype = all(
         (
             release_evidence["reproducible_builds"],
@@ -178,10 +193,14 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         },
         "closed_beta": {
             "passed": closed_beta,
+            "precision_thresholds_met": precision_thresholds_met,
+            "suite_qualified": suite_qualification["qualified"],
             "overall_precision_target": 0.80,
             "high_critical_precision_target": 0.90,
             "blind_temporal_suite_required": True,
             "recall_reported": metrics["ground_truth_recall"] is not None,
+            "qualification_version": suite_qualification["qualification_version"],
+            "qualification_reasons": list(suite_qualification["reasons"]),
         },
         "production_candidate": {
             "passed": production_candidate,
@@ -210,8 +229,12 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         warnings.append("ground-truth recall is undefined because no eligible vulnerabilities were supplied")
     if not high_reports:
         warnings.append("high-severity precision is undefined because no high/critical reports were emitted")
+    if temporal["valid"] and precision_thresholds_met and not suite_qualification["qualified"]:
+        warnings.append(
+            "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
+        )
     report = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.3.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -229,6 +252,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         },
         "metrics": metrics if temporal["valid"] else None,
         "magma": magma if temporal["valid"] else None,
+        "suite_qualification": suite_qualification,
         "release_gates": release_gates,
         "warnings": warnings,
     }
@@ -294,6 +318,17 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             raise ValueError("benchmark trial tools must be a non-empty array")
         if not isinstance(trial["token_budget"], int) or isinstance(trial["token_budget"], bool) or trial["token_budget"] < 0:
             raise ValueError("benchmark token_budget must be a non-negative integer")
+        tokens_used = trial.get("tokens_used")
+        if tokens_used is not None and (
+            not isinstance(tokens_used, int)
+            or isinstance(tokens_used, bool)
+            or tokens_used < 0
+        ):
+            raise ValueError("benchmark tokens_used must be a non-negative integer")
+        if "cost_accounting_complete" in trial and not isinstance(
+            trial["cost_accounting_complete"], bool
+        ):
+            raise ValueError("benchmark cost_accounting_complete must be boolean")
         for field in ("compute_hours", "model_cost"):
             if not isinstance(trial[field], (int, float)) or isinstance(trial[field], bool) or trial[field] < 0:
                 raise ValueError(f"benchmark {field} must be a non-negative number")
@@ -421,6 +456,174 @@ def _release_evidence(value: Any) -> dict[str, Any]:
 
 def _has_release_artifact(evidence: dict[str, Any], gate: str) -> bool:
     return any(item["gate"] == gate for item in evidence["evidence_artifacts"])
+
+
+def _verified_case_pack(
+    manifest: dict[str, Any], manifest_path: Path
+) -> dict[str, Any] | None:
+    reference = manifest.get("case_pack")
+    if reference is None:
+        return None
+    pack_path = resolve_case_pack_reference(manifest_path, str(reference["path"]))
+    if sha256_file(pack_path) != reference["sha256"]:
+        raise ValueError("benchmark case-pack reference hash mismatch")
+    report = verify_case_pack(pack_path)
+    if report["case_pack_sha256"] != reference["sha256"]:
+        raise ValueError("benchmark case-pack verification hash mismatch")
+    return report
+
+
+def _suite_qualification(
+    manifest: dict[str, Any],
+    cases: dict[str, dict[str, Any]],
+    trials: list[dict[str, Any]],
+    high_reports: list[dict[str, Any]],
+    temporal: dict[str, Any],
+    case_pack: dict[str, Any] | None,
+) -> dict[str, Any]:
+    eligible = {
+        case_id: case for case_id, case in cases.items() if case["eligible"] is True
+    }
+    vulnerable_cases = {
+        case_id for case_id, case in eligible.items() if case["ground_truth"]
+    }
+    benign_controls = set(eligible) - vulnerable_cases
+
+    seeds_by_case: dict[str, set[int]] = defaultdict(set)
+    for trial in trials:
+        seed = trial.get("seed")
+        if (
+            trial["case_id"] in eligible
+            and isinstance(seed, int)
+            and not isinstance(seed, bool)
+        ):
+            seeds_by_case[str(trial["case_id"])].add(seed)
+    distinct_seed_counts = {
+        case_id: len(seeds_by_case[case_id]) for case_id in eligible
+    }
+    minimum_distinct_seeds = min(distinct_seed_counts.values(), default=0)
+
+    actionable_high_reports = sum(
+        _evidence_rank(item["evidence_level"])
+        >= _evidence_rank(EvidenceLevel.EXECUTABLE.value)
+        for item in high_reports
+    )
+    fully_accounted_trials = sum(_trial_costs_complete(trial) for trial in trials)
+
+    manifest_case_ids = set(cases)
+    pack_case_ids = set(case_pack["case_ids"]) if case_pack is not None else set()
+    pack_origins = (
+        {str(item["case_id"]): item["originated_at"] for item in case_pack["cases"]}
+        if case_pack is not None
+        else {}
+    )
+    pack_matches_manifest = bool(
+        case_pack is not None
+        and case_pack["cutoff"] == manifest["cutoff"]
+        and pack_case_ids == manifest_case_ids
+        and all(
+            pack_origins.get(case_id) == case["originated_at"]
+            for case_id, case in cases.items()
+        )
+    )
+
+    checks = {
+        "valid_blind_temporal_suite": temporal["valid"] and manifest["blind"] is True,
+        "minimum_vulnerable_cases": len(vulnerable_cases) >= MINIMUM_VULNERABLE_CASES,
+        "minimum_benign_controls": len(benign_controls) >= MINIMUM_BENIGN_CONTROLS,
+        "minimum_distinct_seeds_per_case": bool(eligible)
+        and minimum_distinct_seeds >= MINIMUM_DISTINCT_SEEDS_PER_CASE,
+        "verified_independent_case_pack": bool(
+            case_pack is not None
+            and case_pack["valid"] is True
+            and case_pack["independent"] is True
+            and pack_matches_manifest
+        ),
+        "actionable_high_critical_evidence": actionable_high_reports
+        == len(high_reports),
+        "complete_trial_cost_accounting": fully_accounted_trials == len(trials),
+    }
+    reason_by_check = {
+        "valid_blind_temporal_suite": "requires a valid blind temporal suite",
+        "minimum_vulnerable_cases": (
+            f"requires at least {MINIMUM_VULNERABLE_CASES} eligible vulnerable cases "
+            f"(observed {len(vulnerable_cases)})"
+        ),
+        "minimum_benign_controls": (
+            f"requires at least {MINIMUM_BENIGN_CONTROLS} eligible benign controls "
+            f"(observed {len(benign_controls)})"
+        ),
+        "minimum_distinct_seeds_per_case": (
+            f"requires at least {MINIMUM_DISTINCT_SEEDS_PER_CASE} distinct integer seeds "
+            f"for every eligible case (minimum observed {minimum_distinct_seeds})"
+        ),
+        "verified_independent_case_pack": (
+            "requires a hash-verified independently authored encrypted case pack "
+            "whose cutoff, case ids, and origin timestamps match the manifest"
+        ),
+        "actionable_high_critical_evidence": (
+            "requires executable-or-stronger evidence for every High/Critical report"
+        ),
+        "complete_trial_cost_accounting": (
+            "requires every trial to declare complete accounting, tokens used within a "
+            "non-zero budget, compute hours, and model cost"
+        ),
+    }
+    reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
+    return {
+        "qualification_version": "nirvana-closed-beta-v1",
+        "qualified": all(checks.values()),
+        "requirements": {
+            "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
+            "minimum_eligible_benign_controls": MINIMUM_BENIGN_CONTROLS,
+            "minimum_distinct_seeds_per_eligible_case": MINIMUM_DISTINCT_SEEDS_PER_CASE,
+            "independently_authored_encrypted_case_pack": True,
+            "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
+            "complete_trial_cost_accounting": True,
+        },
+        "observed": {
+            "eligible_vulnerable_cases": len(vulnerable_cases),
+            "eligible_benign_controls": len(benign_controls),
+            "minimum_distinct_seeds_per_eligible_case": minimum_distinct_seeds,
+            "high_critical_reports": len(high_reports),
+            "high_critical_reports_with_actionable_evidence": actionable_high_reports,
+            "trials": len(trials),
+            "fully_accounted_trials": fully_accounted_trials,
+            "case_pack_declared": manifest.get("case_pack") is not None,
+            "case_pack_verified": case_pack is not None,
+            "case_pack_matches_manifest": pack_matches_manifest,
+        },
+        "checks": checks,
+        "reasons": reasons,
+        "case_pack": (
+            {
+                "pack_id": case_pack["pack_id"],
+                "sha256": case_pack["case_pack_sha256"],
+                "case_count": case_pack["case_count"],
+            }
+            if case_pack is not None
+            else None
+        ),
+    }
+
+
+def _trial_costs_complete(trial: dict[str, Any]) -> bool:
+    tokens_used = trial.get("tokens_used")
+    token_budget = trial.get("token_budget")
+    return bool(
+        trial.get("cost_accounting_complete") is True
+        and isinstance(tokens_used, int)
+        and not isinstance(tokens_used, bool)
+        and tokens_used >= 0
+        and isinstance(token_budget, int)
+        and not isinstance(token_budget, bool)
+        and token_budget > 0
+        and tokens_used <= token_budget
+        and isinstance(trial.get("compute_hours"), (int, float))
+        and not isinstance(trial.get("compute_hours"), bool)
+        and isinstance(trial.get("model_cost"), (int, float))
+        and not isinstance(trial.get("model_cost"), bool)
+    )
 
 
 def _validate_temporal_split(manifest: dict[str, Any]) -> dict[str, Any]:

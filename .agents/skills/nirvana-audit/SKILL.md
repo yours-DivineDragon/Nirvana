@@ -125,11 +125,11 @@ Read `references/differential.md` fully. Generate implementations in isolated se
 
 ## Evaluate claims
 
-1. Use `nirvana benchmark evaluate` only with a blind, temporally separated manifest that records cutoffs, corpora, last-vulnerable commits, hidden-variant transforms, ground truth, trials, prompts, models, tools, budgets, transcripts, environments, costs, and coverage.
+1. Use `nirvana benchmark verify-pack` on an independently authored encrypted case pack before running trials. Reference its exact hash from a blind, temporally separated manifest that records cutoffs, corpora, last-vulnerable commits, hidden-variant transforms, ground truth, trials, prompts, models, tools, budgets, transcripts, environments, costs, and coverage.
 2. Block issue text, audit reports, fixes, and other ground-truth material during trials. A post-cutoff training/retrieval/rule corpus invalidates the temporal evaluation.
 3. Treat a nonzero CLI exit or report-level `valid: false` as a failed evaluation. Read every temporal violation from `invalid_reasons`. Invalid artifacts must contain `metrics: null` and `magma: null`, and every release gate must remain closed.
 4. Report undefined metrics as undefined. Do not turn a missing denominator into zero or success.
-5. Populate `release_evidence` rather than inferring maturity from tool names. Attach a retained, hash-verified `evidence_artifacts` entry for every non-statistical gate; booleans alone do not establish maturity. Claim a release stage only when its generated gate passes. Closed beta additionally requires at least 80% validated precision and 90% high/critical precision on the blind temporal suite, with recall reported.
+5. Populate `release_evidence` rather than inferring maturity from tool names. Attach a retained, hash-verified `evidence_artifacts` entry for every non-statistical gate; booleans alone do not establish maturity. Claim a release stage only when its generated gate passes. Closed beta additionally requires at least 80% validated precision and 90% high/critical precision plus `nirvana-closed-beta-v1` suite qualification: 20 eligible vulnerable cases, 10 eligible benign controls, three distinct integer seeds per eligible case, a matching verified independent case pack, executable-or-stronger High/Critical evidence, complete cost accounting, and recall reported. A clean smaller pilot may report metrics but cannot claim closed beta.
 
 ## Report the audit
 
