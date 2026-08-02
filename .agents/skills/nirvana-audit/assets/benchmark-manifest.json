@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "benchmark_id": "REPLACE-WITH-BLIND-BENCHMARK-ID",
   "cutoff": "2025-01-01T00:00:00Z",
   "track": "web3_hidden_variants",
@@ -52,7 +52,7 @@
       "ended_at": "2025-02-15T01:00:00Z",
       "model": "REPLACE-WITH-EXACT-MODEL",
       "prompt_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "tools": ["nirvana-0.4.5"],
+      "tools": ["nirvana-0.4.6"],
       "token_budget": 100000,
       "tokens_used": 0,
       "cost_accounting_complete": false,
@@ -60,6 +60,12 @@
       "model_cost": 1.0,
       "transcript_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "environment_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "ledger_checkpoint": {
+        "algorithm": "nirvana-ledger-checkpoint-v1",
+        "run_directory": "runs/REPLACE-WITH-NIRVANA-RUN-ID",
+        "checkpoint_path": "runs/REPLACE-WITH-NIRVANA-RUN-ID/ledger-checkpoint.json",
+        "checkpoint_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
       "findings": [
         {
           "finding_id": "F-REPLACE-ME",

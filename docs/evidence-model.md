@@ -45,6 +45,8 @@ Each JSONL record contains a sequence number, timestamp, previous-record hash, t
 
 The ledger is tamper-evident, not magically immutable: an attacker who can replace the entire ledger and every external checkpoint can create a new chain. `nirvana ledger checkpoint` exports a signed-data-ready prefix head, and `verify-checkpoint` proves that prefix even after later appends. Production deployments must periodically publish those checkpoints to an independent trusted store; Nirvana deliberately does not choose or contact that store.
 
+Blind benchmark runs add a typed `benchmark_trial_sealed` boundary before reveal. The seal is derived from the full confirmed-finding set and binds trial, case, run, seed, severity, and evidence tier. `nirvana benchmark seal-trial` appends it only after the run is complete and every supporting evidence record is replay-verified, then exports the checkpoint named by the benchmark manifest. Evaluation rechecks the seal, the checkpoint prefix, the current ledger's later replay status, and a one-to-one manifest finding set. The seal does not replace independent publication of the checkpoint hash.
+
 ## Finding contract
 
 A confirmed finding includes the exact target identity, violated property, root cause, code locations, attacker prerequisites, assumptions, causal path, minimal reproducer, impact, independent reproduction steps, severity rationale, related issues, remediation, and regression test.

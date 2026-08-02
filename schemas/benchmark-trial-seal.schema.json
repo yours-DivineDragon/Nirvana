@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-trial-seal.schema.json",
+  "title": "Nirvana benchmark trial ledger seal",
+  "type": "object",
+  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "event": {"const": "benchmark_trial_sealed"},
+    "trial_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "seed": {"type": "integer"},
+    "ledger_sequence_before_seal": {"type": "integer", "minimum": 1},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "severity", "evidence_level"],
+        "properties": {
+          "finding_id": {"type": "string", "pattern": "^F-[A-Za-z0-9._-]+$"},
+          "severity": {"enum": ["informational", "low", "medium", "high", "critical"]},
+          "evidence_level": {"$ref": "common.schema.json#/$defs/evidenceLevel"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "finding_set_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

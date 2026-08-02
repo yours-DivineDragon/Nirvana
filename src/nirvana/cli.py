@@ -13,6 +13,7 @@ from .benchmark_pack import (
     write_case_pack_report,
     write_ground_truth_commitment,
 )
+from .benchmark_ledger import seal_benchmark_trial
 from .board import HypothesisBoard
 from .coverage import CoverageBoard
 from .differential import DifferentialManifest, compare, minimize_mismatch
@@ -41,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.5")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.6")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -234,6 +235,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help="commitment path; defaults to <ground-truth>.commitment.json",
+    )
+    benchmark_seal_trial = benchmark_commands.add_parser(
+        "seal-trial",
+        help="seal a completed run's findings and export its ledger checkpoint",
+    )
+    benchmark_seal_trial.add_argument("run_directory", type=Path)
+    benchmark_seal_trial.add_argument("--trial-id", required=True)
+    benchmark_seal_trial.add_argument("--case-id", required=True)
+    benchmark_seal_trial.add_argument("--seed", required=True, type=int)
+    benchmark_seal_trial.add_argument(
+        "--output",
+        type=Path,
+        help="checkpoint path; defaults to benchmark-trial-checkpoint.json in the run",
     )
 
     deployment = commands.add_parser("deployment", help="verify local source/build bytecode against captured deployed bytecode")
@@ -463,6 +477,27 @@ def main(argv: list[str] | None = None) -> int:
                     f"{commitment['public_commitment_sha256']}"
                 )
                 print(f"commitment artifact: {sha256_file(output)}")
+                return 0
+            if args.benchmark_command == "seal-trial":
+                run_directory = args.run_directory.resolve(strict=True)
+                output = (
+                    args.output.resolve()
+                    if args.output is not None
+                    else run_directory / "benchmark-trial-checkpoint.json"
+                )
+                sealed = seal_benchmark_trial(
+                    run_directory,
+                    trial_id=args.trial_id,
+                    case_id=args.case_id,
+                    seed=args.seed,
+                    output=output,
+                )
+                print(output)
+                print(f"checkpoint: {sealed['checkpoint_sha256']}")
+                print(
+                    f"sealed trial {args.trial_id}: "
+                    f"{len(sealed['seal']['findings'])} findings"
+                )
                 return 0
             if args.benchmark_command == "verify-pack":
                 output = (
