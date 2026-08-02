@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .adjudication import AdjudicationBoard
 from .baseline import run_baseline
+from .benchmark_pack import write_case_pack_report
 from .board import HypothesisBoard
 from .coverage import CoverageBoard
 from .differential import DifferentialManifest, compare, minimize_mismatch
@@ -36,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.3")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.4")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -203,6 +204,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help="report path; defaults to benchmark-report.json beside the manifest",
+    )
+    benchmark_verify_pack = benchmark_commands.add_parser(
+        "verify-pack", help="verify an independently authored encrypted case pack"
+    )
+    benchmark_verify_pack.add_argument("case_pack", type=Path)
+    benchmark_verify_pack.add_argument(
+        "--output",
+        type=Path,
+        help="report path; defaults to benchmark-case-pack-report.json beside the pack",
     )
 
     deployment = commands.add_parser("deployment", help="verify local source/build bytecode against captured deployed bytecode")
@@ -408,6 +418,21 @@ def main(argv: list[str] | None = None) -> int:
             print("private packet created; no disclosure was sent")
             return 0
         if args.command == "benchmark":
+            if args.benchmark_command == "verify-pack":
+                output = (
+                    args.output.resolve()
+                    if args.output is not None
+                    else args.case_pack.resolve(strict=True).with_name(
+                        "benchmark-case-pack-report.json"
+                    )
+                )
+                report = write_case_pack_report(args.case_pack, output)
+                print(output)
+                print(
+                    f"verified independent case pack: {report['pack_id']}; "
+                    f"cases: {report['case_count']}"
+                )
+                return 0
             output = (
                 args.output.resolve()
                 if args.output is not None
@@ -425,6 +450,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"precision: {report['metrics']['validated_precision']}; "
                 f"recall: {report['metrics']['ground_truth_recall']}"
             )
+            closed_beta = report["release_gates"]["closed_beta"]
+            print(
+                f"closed beta: {'passed' if closed_beta['passed'] else 'not passed'}; "
+                f"suite qualified: {closed_beta['suite_qualified']}"
+            )
+            for warning in report["warnings"]:
+                print(f"warning: {warning}", file=sys.stderr)
             return 0
         if args.command == "deployment":
             report = verify_deployments(args.run_directory, args.attestation)

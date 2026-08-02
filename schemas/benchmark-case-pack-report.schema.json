@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nirvana.security/schemas/benchmark-case-pack-report.schema.json",
+  "title": "Nirvana benchmark case-pack verification report",
+  "type": "object",
+  "required": ["schema_version", "created_at", "pack_id", "case_pack_sha256", "cutoff", "valid", "independent", "ground_truth_sealing", "author_attestation", "generator", "case_count", "case_ids", "cases"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "created_at": {"type": "string", "minLength": 1},
+    "pack_id": {"type": "string", "minLength": 1},
+    "case_pack_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "cutoff": {"type": "string", "minLength": 1},
+    "valid": {"const": true},
+    "independent": {"const": true},
+    "ground_truth_sealing": {"type": "object"},
+    "author_attestation": {"type": "object"},
+    "generator": {"type": "object"},
+    "case_count": {"type": "integer", "minimum": 1},
+    "case_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "cases": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}
