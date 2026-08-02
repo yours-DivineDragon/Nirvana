@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "created_at", "pack_id", "case_pack_sha256", "cutoff", "valid", "independent", "target_snapshot_algorithm", "ground_truth_commitment_algorithm", "ground_truth_sealing", "author_attestation", "generator", "case_count", "case_ids", "cases"],
   "properties": {
-    "schema_version": {"const": "1.2.0"},
+    "schema_version": {"const": "1.3.0"},
     "created_at": {"type": "string", "minLength": 1},
     "pack_id": {"type": "string", "minLength": 1},
     "case_pack_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -24,10 +24,13 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["case_id", "originated_at", "kloc", "target_snapshot_sha256", "public_commitment_sha256", "public_commitment_artifact_sha256", "sealed_ground_truth_sha256"],
+        "required": ["case_id", "originated_at", "disclosed_at", "hidden_variant", "transformation_log_sha256", "kloc", "target_snapshot_sha256", "public_commitment_sha256", "public_commitment_artifact_sha256", "sealed_ground_truth_sha256"],
         "properties": {
           "case_id": {"type": "string", "minLength": 1},
           "originated_at": {"type": "string", "minLength": 1},
+          "disclosed_at": {"type": "string", "minLength": 1},
+          "hidden_variant": {"type": "boolean"},
+          "transformation_log_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
           "kloc": {"type": "number", "minimum": 0},
           "target_snapshot_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "public_commitment_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},

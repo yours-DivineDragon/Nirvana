@@ -276,7 +276,7 @@ class EvaluationTests(unittest.TestCase):
             "ended_at": "2025-02-01T00:10:00Z",
             "model": "agent-model-version",
             "prompt_sha256": "1" * 64,
-            "tools": ["nirvana-0.4.8", "forge-1"],
+            "tools": ["nirvana-0.4.9", "forge-1"],
             "token_budget": 100000,
             "compute_hours": 0.5,
             "model_cost": 0.0,
@@ -330,7 +330,7 @@ class EvaluationTests(unittest.TestCase):
                 }
             )
         return {
-            "schema_version": "1.3.0",
+            "schema_version": "1.4.0",
             "benchmark_id": "blind-temporal-1",
             "cutoff": "2024-12-31T00:00:00Z",
             "track": "web3_hidden_variants",
@@ -408,6 +408,8 @@ class EvaluationTests(unittest.TestCase):
                 else []
             )
             originated_at = "2025-01-15T00:00:00Z"
+            disclosed_at = "2025-03-01T00:00:00Z"
+            transformation_log_sha256 = f"{index % 10}" * 64
             target = root / "case-pack-assets" / case_id / "target"
             target.mkdir(parents=True)
             (target / "Fixture.sol").write_text(
@@ -434,6 +436,9 @@ class EvaluationTests(unittest.TestCase):
                 {
                     "case_id": case_id,
                     "originated_at": originated_at,
+                    "disclosed_at": disclosed_at,
+                    "hidden_variant": True,
+                    "transformation_log_sha256": transformation_log_sha256,
                     "kloc": 1.0,
                     "target_path": target.relative_to(root).as_posix(),
                     "target_snapshot_sha256": benchmark_target_snapshot(target)[
@@ -454,10 +459,10 @@ class EvaluationTests(unittest.TestCase):
                     "repository": f"local-fixture/{case_id}",
                     "last_vulnerable_commit": f"{index:040x}",
                     "originated_at": originated_at,
-                    "disclosed_at": "2025-03-01T00:00:00Z",
+                    "disclosed_at": disclosed_at,
                     "eligible": True,
                     "hidden_variant": True,
-                    "transformation_log_sha256": f"{index % 10}" * 64,
+                    "transformation_log_sha256": transformation_log_sha256,
                     "kloc": 1.0,
                     "ground_truth": ground_truth,
                     "ground_truth_material_blocked": True,
@@ -492,7 +497,7 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.8", "forge-1"],
+                        "tools": ["nirvana-0.4.9", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
@@ -514,7 +519,7 @@ class EvaluationTests(unittest.TestCase):
                 )
 
         pack = {
-            "schema_version": "1.2.0",
+            "schema_version": "1.3.0",
             "pack_id": "independent-qualified-pack-1",
             "cutoff": manifest["cutoff"],
             "created_at": "2025-01-20T00:00:00Z",
@@ -557,12 +562,13 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.7.0")
+            self.assertEqual(report["schema_version"], "1.8.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertIsNone(report["ground_truth_validation"]["valid"])
             self.assertTrue(report["finding_attribution_validation"]["valid"])
             self.assertTrue(report["ledger_validation"]["valid"])
+            self.assertTrue(report["magma_validation"]["valid"])
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
             self.assertEqual(report["metrics"]["ground_truth_recall"], 1.0)
             self.assertEqual(report["metrics"]["high_severity_precision"], 1.0)
@@ -602,6 +608,16 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(report["magma"]["reached"], 1)
             self.assertEqual(report["magma"]["triggered"], 1)
             self.assertEqual(report["magma"]["detected_and_explained"], 1)
+            self.assertEqual(report["magma"]["reach_source"], "declared")
+            self.assertEqual(
+                report["magma"]["trigger_source"],
+                "declared_with_ledger_lower_bound",
+            )
+            self.assertEqual(
+                report["magma"]["detection_source"],
+                "derived_from_ledger_bound_true_positives",
+            )
+            self.assertTrue(report["magma"]["monotonicity_enforced"])
             self.assertIn("calibration", report["metrics"])
             self.assertIn("cost_efficiency", report["metrics"])
             self.assertIn("stability", report["metrics"])
@@ -653,7 +669,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(all(report["suite_qualification"]["checks"].values()))
             self.assertEqual(
                 report["suite_qualification"]["qualification_version"],
-                "nirvana-closed-beta-v4",
+                "nirvana-closed-beta-v5",
             )
             self.assertEqual(
                 report["ground_truth_validation"]["matched_kloc_case_count"], 30
@@ -840,6 +856,174 @@ class EvaluationTests(unittest.TestCase):
                 "KLOC does not match the pre-trial case pack",
                 " ".join(report["invalid_reasons"]),
             )
+
+    def test_case_metadata_must_match_the_independent_case_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = self.qualified_manifest(root)
+            attacks = (
+                (
+                    "disclosed_at",
+                    "2025-04-01T00:00:00Z",
+                    "disclosure timestamp does not match",
+                    "disclosed_at_mismatched_case_ids",
+                ),
+                (
+                    "hidden_variant",
+                    False,
+                    "hidden-variant status does not match",
+                    "hidden_variant_mismatched_case_ids",
+                ),
+                (
+                    "transformation_log_sha256",
+                    "f" * 64,
+                    "transformation-log hash does not match",
+                    "transformation_log_mismatched_case_ids",
+                ),
+            )
+            for field, value, message, mismatch_field in attacks:
+                with self.subTest(field=field):
+                    manifest = json.loads(json.dumps(original))
+                    manifest["cases"][0][field] = value
+                    path = root / f"benchmark-{field}.json"
+                    path.write_text(json.dumps(manifest))
+                    report = evaluate_benchmark(path)
+                    self.assertFalse(report["valid"])
+                    self.assertIsNone(report["metrics"])
+                    self.assertIsNone(report["magma"])
+                    self.assertFalse(
+                        report["ground_truth_validation"]["case_metadata_valid"]
+                    )
+                    self.assertEqual(
+                        report["ground_truth_validation"][mismatch_field],
+                        ["CASE-001"],
+                    )
+                    self.assertIn(message, " ".join(report["invalid_reasons"]))
+
+    def test_hidden_variant_track_requires_author_marked_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["cases"][0]["hidden_variant"] = False
+            manifest["cases"][0]["transformation_log_sha256"] = None
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "hidden-variant track case CASE-1 is not marked as a hidden variant",
+                " ".join(report["temporal_validation"]["violations"]),
+            )
+
+    def test_false_positive_cannot_claim_magma_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"] = [manifest["trials"][0]]
+            manifest["trials"][0]["findings"][0]["verdict"] = "false_positive"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIsNone(report["magma"])
+            self.assertIn(
+                "detected ids are not backed by ledger-bound attributed true positives",
+                " ".join(report["magma_validation"]["violations"]),
+            )
+
+    def test_magma_levels_cannot_name_uncommitted_ground_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"] = [manifest["trials"][0]]
+            manifest["trials"][0]["reached_ids"].append("V99")
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "declares unknown reached ground-truth ids",
+                " ".join(report["magma_validation"]["violations"]),
+            )
+
+    def test_magma_detection_is_derived_from_true_positive_adjudication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"] = [manifest["trials"][0]]
+            trial = manifest["trials"][0]
+            trial["findings"][0]["verdict"] = "false_positive"
+            trial["detected_ids"] = []
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertTrue(report["valid"])
+            self.assertEqual(report["metrics"]["validated_precision"], 0.0)
+            self.assertEqual(report["metrics"]["ground_truth_recall"], 0.0)
+            self.assertEqual(report["magma"]["triggered"], 1)
+            self.assertEqual(report["magma"]["detected_and_explained"], 0)
+            self.assertEqual(
+                report["magma_validation"]["trials"][0][
+                    "ledger_required_triggered_ids"
+                ],
+                ["VULN-1"],
+            )
+
+    def test_manifest_cannot_omit_ledger_derived_magma_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"] = [manifest["trials"][0]]
+            manifest["trials"][0]["detected_ids"] = []
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "omits ledger-derived detected ids",
+                " ".join(report["magma_validation"]["violations"]),
+            )
+
+    def test_magma_trigger_must_include_replay_demonstrated_condition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"] = [manifest["trials"][0]]
+            trial = manifest["trials"][0]
+            trial["findings"][0]["verdict"] = "false_positive"
+            trial["detected_ids"] = []
+            trial["triggered_ids"] = []
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "triggered ids omit ledger-demonstrated triggers",
+                " ".join(report["magma_validation"]["violations"]),
+            )
+
+    def test_magma_levels_must_be_monotonic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"] = [manifest["trials"][0]]
+            trial = manifest["trials"][0]
+            trial["reached_ids"] = []
+            trial["triggered_ids"] = []
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            violations = " ".join(report["magma_validation"]["violations"])
+            self.assertFalse(report["valid"])
+            self.assertIn("detected ids must be a subset of triggered ids", violations)
+
+            trial["triggered_ids"] = ["VULN-1"]
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            violations = " ".join(report["magma_validation"]["violations"])
+            self.assertFalse(report["valid"])
+            self.assertIn("triggered ids must be a subset of reached ids", violations)
 
     def test_claimed_evidence_tier_must_match_checkpointed_finding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
