@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.7")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.8")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -497,6 +497,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"sealed trial {args.trial_id}: "
                     f"{len(sealed['seal']['findings'])} findings"
+                )
+                print(f"coverage: {sealed['seal']['coverage_sha256']}")
+                print(
+                    "coverage values: "
+                    + json.dumps(sealed["seal"]["coverage"], sort_keys=True)
                 )
                 return 0
             if args.benchmark_command == "verify-pack":

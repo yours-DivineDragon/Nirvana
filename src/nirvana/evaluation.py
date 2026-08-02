@@ -18,6 +18,7 @@ from .benchmark_pack import (
 )
 from .benchmark_ledger import validate_trial_ledger_bindings
 from .contracts import validate_contract
+from .coverage import COVERAGE_DIMENSIONS
 from .models import EvidenceLevel, Severity
 from .util import atomic_write_json, sha256_file, utc_now
 
@@ -57,6 +58,11 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         for result in ledger_validation["trials"]
         for finding in result["derived_findings"]
     }
+    derived_trial_coverage = {
+        str(result["trial_id"]): result["derived_coverage"]
+        for result in ledger_validation["trials"]
+        if result["derived_coverage"] is not None
+    }
     findings: list[dict[str, Any]] = []
     for trial in trials:
         for finding in trial["findings"]:
@@ -71,6 +77,11 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             if derived is not None:
                 item["reproduced"] = derived["reproduced"]
                 item["patch_tests_passed"] = derived["patch_tests_passed"]
+                item["novel"] = derived["novel"]
+                item["duplicate"] = derived["duplicate"]
+                item["time_to_finding_seconds"] = derived[
+                    "time_to_finding_seconds"
+                ]
             findings.append(item)
     eligible_ground_truth = {
         (case_id, str(vulnerability["vulnerability_id"]))
@@ -119,6 +130,9 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         if _evidence_rank(item["evidence_level"])
         >= _evidence_rank(EvidenceLevel.STRUCTURALLY_CONFIRMED.value)
     ]
+    novelty_yield_complete = all(
+        item.get("novel") is not None for item in confirmed
+    )
     novel_confirmed = [item for item in confirmed if item.get("novel") is True]
     kloc_is_committed = bool(
         case_pack is not None and ground_truth_validation["kloc_valid"] is True
@@ -131,6 +145,9 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     total_compute = sum(float(item["compute_hours"]) for item in trials)
     total_model_cost = sum(float(item["model_cost"]) for item in trials)
     reproduced = [item for item in confirmed if item.get("reproduced") is True]
+    duplicate_rate_complete = all(
+        item.get("duplicate") is not None for item in reported
+    )
     duplicates = [item for item in reported if item.get("duplicate") is True]
     patchable = [item for item in true_reports if item.get("patch_tests_passed") is not None]
     patch_correct = [item for item in patchable if item["patch_tests_passed"] is True]
@@ -143,31 +160,33 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         if item.get("time_to_finding_seconds") is not None
     ]
     evidence_counts = Counter(item["evidence_level"] for item in reported)
-    coverage_dimensions = ("assets", "authority_paths", "state_transitions", "trust_boundaries")
     coverage = {
         dimension: _mean(
-            float(trial["coverage"][dimension])
+            float(derived_trial_coverage[str(trial["trial_id"])][dimension])
             for trial in trials
-            if dimension in trial["coverage"]
+            if str(trial["trial_id"]) in derived_trial_coverage
         )
-        for dimension in coverage_dimensions
+        for dimension in COVERAGE_DIMENSIONS
     }
+    novel_yield = {
+        "total": len(novel_confirmed),
+        "per_project": _ratio(len(novel_confirmed), len(cases)),
+        "per_kloc": (
+            _ratio(len(novel_confirmed), total_kloc)
+            if total_kloc is not None
+            else None
+        ),
+        "per_compute_hour": _ratio(len(novel_confirmed), total_compute),
+        "per_model_cost_unit": _ratio(len(novel_confirmed), total_model_cost),
+    }
+    if not novelty_yield_complete:
+        novel_yield = {key: None for key in novel_yield}
     stability = _stability(trials)
     metrics = {
         "validated_precision": _ratio(len(true_reports), len(reported)),
         "ground_truth_recall": _ratio(len(detected_ground_truth), len(eligible_ground_truth)),
         "high_severity_precision": _ratio(len(high_true), len(high_reports)),
-        "novel_validated_yield": {
-            "total": len(novel_confirmed),
-            "per_project": _ratio(len(novel_confirmed), len(cases)),
-            "per_kloc": (
-                _ratio(len(novel_confirmed), total_kloc)
-                if total_kloc is not None
-                else None
-            ),
-            "per_compute_hour": _ratio(len(novel_confirmed), total_compute),
-            "per_model_cost_unit": _ratio(len(novel_confirmed), total_model_cost),
-        },
+        "novel_validated_yield": novel_yield,
         "time_to_first_valid_finding_seconds": min(first_times) if first_times else None,
         "evidence_level_distribution": {
             level.value: _ratio(evidence_counts[level.value], len(reported))
@@ -178,7 +197,11 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             **coverage,
             "mean": _mean(value for value in coverage.values() if value is not None),
         },
-        "duplicate_rate": _ratio(len(duplicates), len(reported)),
+        "duplicate_rate": (
+            _ratio(len(duplicates), len(reported))
+            if duplicate_rate_complete
+            else None
+        ),
         "calibration": {
             "brier_score": _mean(
                 (float(item["confidence"]) - (1.0 if item["verdict"] == "true_positive" else 0.0)) ** 2
@@ -309,12 +332,22 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "per-KLOC yield is undefined because no independently committed case "
             "sizes were supplied"
         )
+    if evaluation_valid and not novelty_yield_complete:
+        warnings.append(
+            "novel validated yield is undefined because one or more confirmed "
+            "findings lack a checkpointed novelty assessment"
+        )
+    if evaluation_valid and not duplicate_rate_complete:
+        warnings.append(
+            "duplicate rate is undefined because one or more reported findings "
+            "lack a checkpointed novelty assessment"
+        )
     if evaluation_valid and precision_thresholds_met and not suite_qualification["qualified"]:
         warnings.append(
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.6.0",
+        "schema_version": "1.7.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -336,6 +369,10 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "true_reports": len(true_reports),
             "confirmed_true_reports": len(confirmed),
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "novelty_assessed_findings": sum(
+                item.get("novelty_classification") is not None
+                for item in derived_finding_states.values()
+            ),
             "committed_kloc_cases": ground_truth_validation[
                 "matched_kloc_case_count"
             ],
@@ -409,7 +446,7 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             "trial_id", "case_id", "run_id", "seed", "started_at", "ended_at",
             "model", "prompt_sha256", "tools", "token_budget", "compute_hours",
             "model_cost", "transcript_sha256", "environment_sha256", "findings",
-            "coverage", "reached_ids", "triggered_ids", "detected_ids",
+            "coverage", "coverage_sha256", "reached_ids", "triggered_ids", "detected_ids",
             "ledger_checkpoint",
         }
         missing = required - trial.keys()
@@ -425,6 +462,28 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
         if trial["run_id"] in run_ids:
             raise ValueError(f"duplicate benchmark run id: {trial['run_id']}")
         run_ids.add(trial["run_id"])
+        coverage_sha256 = trial["coverage_sha256"]
+        if (
+            not isinstance(coverage_sha256, str)
+            or len(coverage_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in coverage_sha256
+            )
+        ):
+            raise ValueError("benchmark trial coverage_sha256 must be a SHA-256 digest")
+        coverage = trial["coverage"]
+        if not isinstance(coverage, dict) or set(coverage) != set(COVERAGE_DIMENSIONS):
+            raise ValueError(
+                "benchmark trial coverage must contain exactly the six runtime dimensions"
+            )
+        if any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not 0 <= value <= 1
+            for value in coverage.values()
+        ):
+            raise ValueError("benchmark trial coverage values must be between zero and one")
         binding = trial["ledger_checkpoint"]
         required_binding = {
             "algorithm",
@@ -486,11 +545,27 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             EvidenceLevel(finding["evidence_level"])
             if not isinstance(finding["reproduced"], bool):
                 raise ValueError("benchmark finding reproduced must be boolean")
+            for field in ("novel", "duplicate"):
+                if finding[field] is not None and not isinstance(
+                    finding[field], bool
+                ):
+                    raise ValueError(
+                        f"benchmark finding {field} must be boolean or null"
+                    )
             if finding["patch_tests_passed"] is not None and not isinstance(
                 finding["patch_tests_passed"], bool
             ):
                 raise ValueError(
                     "benchmark finding patch_tests_passed must be boolean or null"
+                )
+            time_to_finding = finding["time_to_finding_seconds"]
+            if (
+                not isinstance(time_to_finding, (int, float))
+                or isinstance(time_to_finding, bool)
+                or time_to_finding < 0
+            ):
+                raise ValueError(
+                    "benchmark finding time_to_finding_seconds must be non-negative"
                 )
             confidence = finding["confidence"]
             if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= confidence <= 1:
@@ -829,6 +904,15 @@ def _suite_qualification(
         for item in high_reports
     )
     fully_accounted_trials = sum(_trial_costs_complete(trial) for trial in trials)
+    derived_findings = [
+        finding
+        for trial_result in ledger_validation["trials"]
+        for finding in trial_result["derived_findings"]
+    ]
+    fully_adjudicated_findings = sum(
+        finding.get("novelty_classification") is not None
+        for finding in derived_findings
+    )
 
     pack_matches_manifest = ground_truth_validation["metadata_matches"] is True
 
@@ -854,6 +938,9 @@ def _suite_qualification(
         ]
         is True,
         "checkpointed_trial_ledgers": ledger_validation["valid"] is True,
+        "complete_checkpointed_novelty_adjudication": (
+            fully_adjudicated_findings == len(derived_findings)
+        ),
         "actionable_high_critical_evidence": actionable_high_reports
         == len(high_reports),
         "complete_trial_cost_accounting": fully_accounted_trials == len(trials),
@@ -892,6 +979,10 @@ def _suite_qualification(
             "requires every trial and complete finding set to match a verified Nirvana "
             "ledger checkpoint with replay-verified evidence at the claimed tier"
         ),
+        "complete_checkpointed_novelty_adjudication": (
+            "requires every checkpointed finding to have a corpus-bound novelty "
+            "assessment before benchmark sealing"
+        ),
         "actionable_high_critical_evidence": (
             "requires executable-or-stronger evidence for every High/Critical report"
         ),
@@ -902,7 +993,7 @@ def _suite_qualification(
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v3",
+        "qualification_version": "nirvana-closed-beta-v4",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -913,6 +1004,7 @@ def _suite_qualification(
             "committed_ground_truth_attribution": True,
             "committed_case_sizes": True,
             "checkpointed_trial_ledgers": True,
+            "complete_checkpointed_novelty_adjudication": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
             "complete_trial_cost_accounting": True,
         },
@@ -944,6 +1036,9 @@ def _suite_qualification(
             ],
             "verified_trial_ledgers": ledger_validation["verified_trial_count"],
             "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "checkpointed_findings_with_novelty_assessments": (
+                fully_adjudicated_findings
+            ),
             "externally_anchored_trial_ledgers": ledger_validation[
                 "externally_anchored_trial_count"
             ],

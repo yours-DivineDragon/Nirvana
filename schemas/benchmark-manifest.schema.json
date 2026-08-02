@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "benchmark_id", "cutoff", "track", "blind", "corpora", "cases", "trials"],
   "properties": {
-    "schema_version": {"const": "1.2.0"},
+    "schema_version": {"const": "1.3.0"},
     "benchmark_id": {"type": "string", "minLength": 1},
     "cutoff": {"type": "string", "minLength": 1},
     "track": {"enum": ["historical_web3", "web3_exploit", "web3_hidden_variants", "solana_move", "native_jvm", "fuzzing", "continuous_discovery", "patch_quality", "novel_discovery"]},
@@ -26,8 +26,9 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["ledger_checkpoint"],
+        "required": ["ledger_checkpoint", "coverage_sha256"],
         "properties": {
+          "coverage_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "ledger_checkpoint": {
             "type": "object",
             "required": ["algorithm", "run_directory", "checkpoint_path", "checkpoint_sha256"],

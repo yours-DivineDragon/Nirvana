@@ -21,7 +21,9 @@ from nirvana.util import sha256_file
 
 
 class EvaluationTests(unittest.TestCase):
-    def bind_trial(self, root: Path, trial: dict) -> None:
+    def bind_trial(
+        self, root: Path, trial: dict, *, assess_novelty: bool = True
+    ) -> None:
         run_directory = root / "runs" / trial["run_id"]
         run_directory.mkdir(parents=True, exist_ok=True)
         ledger = EvidenceLedger(run_directory / "evidence.jsonl")
@@ -65,6 +67,45 @@ class EvaluationTests(unittest.TestCase):
             "warnings": [],
         }
         ledger.append({"event": "scope_captured", "scope": captured_scope})
+        coverage_initial = {
+            "schema_version": "1.0.0",
+            "created_at": "2025-02-01T00:00:00Z",
+            "graph_sha256": "c" * 64,
+            "flows": [],
+            "threat_lenses": [],
+            "tasks": [],
+            "tracked": {
+                "functions_and_modules": [],
+                "assets": [],
+                "authority_paths": [],
+                "state_transitions": [],
+                "trust_boundaries": [],
+                "privileged_actions": [],
+                "invariants": [],
+                "dynamic_states_reached": [],
+                "hypotheses_tested": [],
+            },
+            "completeness": {
+                "assets": 1.0,
+                "authority_paths": 1.0,
+                "state_transitions": 1.0,
+                "trust_boundaries": 1.0,
+                "dynamic_states": 0.0,
+                "flow_threat_tasks": 0.0,
+            },
+        }
+        coverage_path = run_directory / "coverage-initial.json"
+        coverage_path.write_text(json.dumps(coverage_initial))
+        ledger.append(
+            {
+                "event": "coverage_schedule_created",
+                "artifact_path": str(coverage_path),
+                "coverage_sha256": sha256_file(coverage_path),
+                "graph_sha256": coverage_initial["graph_sha256"],
+                "flow_count": 0,
+                "task_count": 0,
+            }
+        )
 
         finding_payloads = []
         for finding in trial["findings"]:
@@ -160,6 +201,30 @@ class EvaluationTests(unittest.TestCase):
                 }
             )
         ledger.append_many(finding_payloads)
+        if assess_novelty:
+            for finding in trial["findings"]:
+                classification = (
+                    "exact_duplicate"
+                    if finding["duplicate"] is True
+                    else (
+                        "novel_mechanism"
+                        if finding["novel"] is True
+                        else "variant"
+                    )
+                )
+                ledger.append(
+                    {
+                        "event": "novelty_assessed",
+                        "finding_id": finding["finding_id"],
+                        "classification": classification,
+                        "related_issues": [],
+                        "rationale": "benchmark fixture novelty adjudication",
+                        "causal_comparisons": [],
+                        "corpus_path": str(root / "known-issues.json"),
+                        "corpus_sha256": "6" * 64,
+                        "assessed_at": "2025-02-01T00:02:00Z",
+                    }
+                )
         ledger.append(
             {
                 "event": "run_completed",
@@ -184,8 +249,24 @@ class EvaluationTests(unittest.TestCase):
             "checkpoint_path": checkpoint.relative_to(root).as_posix(),
             "checkpoint_sha256": sealed["checkpoint_sha256"],
         }
+        trial["coverage_sha256"] = sealed["seal"]["coverage_sha256"]
+        trial["coverage"] = sealed["seal"]["coverage"]
+        sealed_findings = {
+            finding["finding_id"]: finding
+            for finding in sealed["seal"]["findings"]
+        }
+        for finding in trial["findings"]:
+            derived = sealed_findings[finding["finding_id"]]
+            for field in (
+                "reproduced",
+                "patch_tests_passed",
+                "novel",
+                "duplicate",
+                "time_to_finding_seconds",
+            ):
+                finding[field] = derived[field]
 
-    def manifest(self, root: Path) -> dict:
+    def manifest(self, root: Path, *, assess_novelty: bool = True) -> dict:
         trial = {
             "trial_id": "T-1",
             "case_id": "CASE-1",
@@ -195,7 +276,7 @@ class EvaluationTests(unittest.TestCase):
             "ended_at": "2025-02-01T00:10:00Z",
             "model": "agent-model-version",
             "prompt_sha256": "1" * 64,
-            "tools": ["nirvana-0.4.7", "forge-1"],
+            "tools": ["nirvana-0.4.8", "forge-1"],
             "token_budget": 100000,
             "compute_hours": 0.5,
             "model_cost": 0.0,
@@ -230,8 +311,8 @@ class EvaluationTests(unittest.TestCase):
         second["trial_id"] = "T-2"
         second["run_id"] = "RUN-2"
         second["seed"] = 2
-        self.bind_trial(root, trial)
-        self.bind_trial(root, second)
+        self.bind_trial(root, trial, assess_novelty=assess_novelty)
+        self.bind_trial(root, second, assess_novelty=assess_novelty)
         release_artifacts = []
         for gate in (
             "research_prototype",
@@ -249,7 +330,7 @@ class EvaluationTests(unittest.TestCase):
                 }
             )
         return {
-            "schema_version": "1.2.0",
+            "schema_version": "1.3.0",
             "benchmark_id": "blind-temporal-1",
             "cutoff": "2024-12-31T00:00:00Z",
             "track": "web3_hidden_variants",
@@ -411,7 +492,7 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.7", "forge-1"],
+                        "tools": ["nirvana-0.4.8", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
@@ -476,7 +557,7 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.6.0")
+            self.assertEqual(report["schema_version"], "1.7.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertIsNone(report["ground_truth_validation"]["valid"])
@@ -485,6 +566,21 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
             self.assertEqual(report["metrics"]["ground_truth_recall"], 1.0)
             self.assertEqual(report["metrics"]["high_severity_precision"], 1.0)
+            self.assertEqual(
+                set(report["metrics"]["coverage_completeness"]),
+                {
+                    "assets",
+                    "authority_paths",
+                    "state_transitions",
+                    "trust_boundaries",
+                    "dynamic_states",
+                    "flow_threat_tasks",
+                    "mean",
+                },
+            )
+            self.assertAlmostEqual(
+                report["metrics"]["coverage_completeness"]["mean"], 2 / 3
+            )
             self.assertIsNone(
                 report["metrics"]["novel_validated_yield"]["per_kloc"]
             )
@@ -557,7 +653,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(all(report["suite_qualification"]["checks"].values()))
             self.assertEqual(
                 report["suite_qualification"]["qualification_version"],
-                "nirvana-closed-beta-v3",
+                "nirvana-closed-beta-v4",
             )
             self.assertEqual(
                 report["ground_truth_validation"]["matched_kloc_case_count"], 30
@@ -626,6 +722,103 @@ class EvaluationTests(unittest.TestCase):
             self.assertIsNone(report["metrics"])
             self.assertIn(
                 "patch-test state does not match",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_coverage_must_match_checkpointed_run_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["coverage"]["dynamic_states"] = 0.9
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIn(
+                "coverage values do not match its checkpointed run",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_coverage_hash_must_match_checkpointed_run_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["coverage_sha256"] = "0" * 64
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "coverage hash does not match its checkpointed run",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_novel_state_requires_checkpointed_novelty_assessment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root, assess_novelty=False)
+            manifest["trials"][0]["findings"][0]["novel"] = True
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIn(
+                "novel state does not match its checkpointed novelty assessment",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_duplicate_state_requires_checkpointed_novelty_assessment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root, assess_novelty=False)
+            manifest["trials"][0]["findings"][0]["duplicate"] = True
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIn(
+                "duplicate state does not match its checkpointed novelty assessment",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_unassessed_novelty_stays_unknown_and_blocks_claim_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root, assess_novelty=False)
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertTrue(report["valid"])
+            self.assertIsNone(
+                report["metrics"]["novel_validated_yield"]["total"]
+            )
+            self.assertIsNone(report["metrics"]["duplicate_rate"])
+            self.assertFalse(
+                report["suite_qualification"]["checks"][
+                    "complete_checkpointed_novelty_adjudication"
+                ]
+            )
+            self.assertIn(
+                "lack a checkpointed novelty assessment",
+                " ".join(report["warnings"]),
+            )
+
+    def test_time_to_finding_must_match_checkpointed_ledger_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            finding = manifest["trials"][0]["findings"][0]
+            finding["time_to_finding_seconds"] += 300
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIsNone(report["metrics"])
+            self.assertIn(
+                "time-to-finding does not match its checkpointed ledger timestamps",
                 " ".join(report["ledger_validation"]["violations"]),
             )
 
