@@ -5,10 +5,10 @@ Nirvana separates a valid measurement from a maturity claim. A small or explorat
 `benchmark-report.json` exposes the distinction directly:
 
 - `release_gates.closed_beta.precision_thresholds_met` applies the founding specification's 80% overall and 90% High/Critical precision targets.
-- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v1` operational floors.
+- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v2` operational floors.
 - `release_gates.closed_beta.passed` is true only when both are true.
 
-The v1 operational floors are project policy, not a claim that a particular sample size proves general performance:
+The v2 operational floors are project policy, not a claim that a particular sample size proves general performance:
 
 | Qualification check | Floor |
 |---|---:|
@@ -16,6 +16,8 @@ The v1 operational floors are project policy, not a claim that a particular samp
 | Eligible benign controls | 10 |
 | Distinct integer seeds per eligible case | 3 |
 | Case provenance | Verified independent encrypted case pack and matching reveal commitments |
+| Finding attribution | Every true positive names committed ground truth; every non-null id belongs to that case |
+| Run provenance | Every trial and complete finding set matches a sealed ledger checkpoint |
 | High/Critical evidence | Executable or stronger for every report |
 | Trial accounting | Complete tokens, budget, compute, and model cost |
 
@@ -65,6 +67,8 @@ Reference the verified bytes from the post-reveal benchmark manifest with a rela
 
 Evaluation re-verifies the pack instead of trusting a prior report. After the trial, populate each manifest case from the revealed canonical document. Evaluation recomputes every commitment from the manifest's `case_id`, `eligible`, derived vulnerable/benign class, and full `ground_truth` list. The pack cutoff, complete case-id set, case origin timestamps, and all reveal commitments must match. Any mismatch is report-level invalidity: metrics and Magma values are null and every gate closes. This prevents a missed vulnerable case from being relabelled benign or ineligible after results are known.
 
+Adjudication is bound to that same committed label set. A `true_positive` must carry a non-null `ground_truth_id`, and every non-null attribution on any finding must name a vulnerability committed for that case. An unmatched id is a validation violation, never a precision point. This keeps the precision numerator and the recall numerator under the same reveal commitment.
+
 ## Trial recording
 
 Run every eligible case with at least three distinct integer seeds. Each trial must retain its prompt, transcript, environment, model, tools, and hashes, and must add:
@@ -79,7 +83,32 @@ Run every eligible case with at least three distinct integer seeds. Each trial m
 }
 ```
 
-`tokens_used` must not exceed a non-zero budget. A zero model cost is valid for local inference, but it must be recorded deliberately. A High or Critical report below `executable` evidence keeps the benchmark valid while disqualifying it from closed beta.
+`tokens_used` must not exceed a non-zero budget. A zero model cost is valid for local inference, but it must be recorded deliberately. A High or Critical claim below `executable` cannot enter a Nirvana `finding_confirmed` event, so it cannot satisfy the trial-ledger binding.
+
+Before ground truth is revealed, seal each completed Nirvana run and export the exact checkpoint the manifest will reference:
+
+```bash
+nirvana benchmark seal-trial ./nirvana-runs/<run-id> \
+  --trial-id TRIAL-1 --case-id CASE-1 --seed 1 \
+  --output ./nirvana-runs/<run-id>/benchmark-trial-checkpoint.json
+```
+
+The command derives the complete `finding_confirmed` set from the ledger, records each finding's severity and evidence tier in a `benchmark_trial_sealed` event, refuses missing or currently failed replay evidence, and then checkpoints that seal. It prints the checkpoint artifact SHA-256. Put the relative paths and exact digest into manifest v1.1:
+
+```json
+{
+  "ledger_checkpoint": {
+    "algorithm": "nirvana-ledger-checkpoint-v1",
+    "run_directory": "nirvana-runs/<run-id>",
+    "checkpoint_path": "nirvana-runs/<run-id>/benchmark-trial-checkpoint.json",
+    "checkpoint_sha256": "<SHA-256>"
+  }
+}
+```
+
+Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, invented findings, omitted checkpointed findings, severity or evidence-tier drift, unverified supporting evidence, and evidence invalidated by a later replay failure. This is a one-to-one binding: an operator cannot quietly omit a checkpointed false positive from the precision denominator. Manifest v1.1 is intentionally incompatible with unbound v1.0 trials.
+
+The checkpoint remains a tamper-evident local commitment until its hash is published to an independent trusted store. Nirvana reports whether the checkpoint contains an `external_anchor`, but does not claim to verify the honesty, independence, or publication time of that outside service.
 
 Only reveal and adjudicate ground truth after all trial artifacts are sealed. Then run:
 
@@ -87,7 +116,7 @@ Only reveal and adjudicate ground truth after all trial artifacts are sealed. Th
 nirvana benchmark evaluate benchmark-manifest.json --output benchmark-report.json
 ```
 
-Temporal contamination or a ground-truth commitment mismatch invalidates the entire report: metrics and Magma values become null, every gate closes, and the CLI exits non-zero. Sample insufficiency does not invalidate a clean pilot; it appears in `suite_qualification.reasons` instead.
+Temporal contamination, a reveal or finding-attribution mismatch, or a broken trial-ledger binding invalidates the entire report: metrics and Magma values become null, every gate closes, and the CLI exits non-zero. Sample insufficiency does not invalidate a clean pilot; it appears in `suite_qualification.reasons` instead.
 
 ## Pinned executable harness
 

@@ -10,12 +10,182 @@ from nirvana.benchmark_pack import (
     canonical_ground_truth_document,
     write_ground_truth_commitment,
 )
+from nirvana.benchmark_ledger import (
+    BENCHMARK_LEDGER_BINDING_ALGORITHM,
+    seal_benchmark_trial,
+)
 from nirvana.evaluation import evaluate_benchmark
+from nirvana.ledger import EvidenceLedger
+from nirvana.models import EVIDENCE_RANK, EvidenceLevel
 from nirvana.util import sha256_file
 
 
 class EvaluationTests(unittest.TestCase):
-    def manifest(self, root: Path | None = None) -> dict:
+    def bind_trial(self, root: Path, trial: dict) -> None:
+        run_directory = root / "runs" / trial["run_id"]
+        run_directory.mkdir(parents=True, exist_ok=True)
+        ledger = EvidenceLedger(run_directory / "evidence.jsonl")
+        levels = [
+            EvidenceLevel(finding["evidence_level"])
+            for finding in trial["findings"]
+        ]
+        ceiling = max(
+            levels,
+            key=lambda item: EVIDENCE_RANK[item],
+            default=EvidenceLevel.HYPOTHESIS,
+        )
+        captured_scope = {
+            "schema_version": "2.0.0",
+            "created_at": "2025-02-01T00:00:00Z",
+            "target_root": str(root),
+            "repository_commit": None,
+            "repository_dirty": False,
+            "target_snapshot_sha256": "a" * 64,
+            "snapshot_complete": True,
+            "max_analysis_file_bytes": 5000000,
+            "files": [],
+            "excluded_directories": [".git"],
+            "toolchains": [],
+            "frameworks": [],
+            "languages": {},
+            "untrusted_instruction_surfaces": [],
+            "build_status": "not_detected",
+            "test_status": "not_detected",
+            "evidence_ceiling": "hypothesis",
+            "dependency_manifests": [],
+            "discovered_artifacts": [],
+            "privileged_identities": [],
+            "upgrade_mechanisms": [],
+            "external_dependencies": [],
+            "build_plan": [],
+            "test_plan": [],
+            "deployment_matches": [],
+            "declared_tool_versions": {},
+            "submodules": [],
+            "warnings": [],
+        }
+        ledger.append({"event": "scope_captured", "scope": captured_scope})
+
+        finding_payloads = []
+        for finding in trial["findings"]:
+            suffix = finding["finding_id"].removeprefix("F-")
+            evidence_id = f"E-{suffix}"
+            level = EvidenceLevel(finding["evidence_level"])
+            evidence_record = {
+                "evidence_id": evidence_id,
+                "hypothesis_id": f"H-{suffix}",
+                "level": level.value,
+                "kind": "benchmark-fixture",
+                "summary": "replay-verified benchmark fixture evidence",
+                "source": "nirvana:command-runner",
+                "artifact_path": str(run_directory / f"{evidence_id}.json"),
+                "artifact_sha256": "b" * 64,
+                "command": (
+                    ["fixture-verifier"]
+                    if EVIDENCE_RANK[level]
+                    >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]
+                    else []
+                ),
+                "tool_version": "fixture-1",
+                "assumptions": [],
+                "metadata": {
+                    "runner_minted": True,
+                    "negative_control_verified": True,
+                },
+                "created_at": "2025-02-01T00:01:00Z",
+            }
+            ledger.append(
+                {
+                    "event": "evidence_recorded",
+                    "evidence": evidence_record,
+                    "minted_by": "nirvana:command-runner",
+                }
+            )
+            ledger.append(
+                {
+                    "event": "evidence_verified",
+                    "evidence_id": evidence_id,
+                }
+            )
+            finding_payloads.append(
+                {
+                    "event": "finding_confirmed",
+                    "finding": {
+                        "finding_id": finding["finding_id"],
+                        "hypothesis_id": f"H-{suffix}",
+                        "title": "Benchmark fixture finding",
+                        "severity": finding["severity"],
+                        "evidence_level": level.value,
+                        "security_property": "fixture property",
+                        "root_cause": "fixture root cause",
+                        "locations": [{"path": "Fixture.sol", "line_start": 1}],
+                        "attacker_prerequisites": ["fixture access"],
+                        "assumptions": [],
+                        "causal_path": ["fixture-node"],
+                        "reproducer": "fixture reproducer",
+                        "impact": "fixture impact",
+                        "severity_rationale": "fixture severity rationale",
+                        "reproduction_instructions": ["run fixture verifier"],
+                        "remediation": "fix the fixture",
+                        "regression_test": "run fixture regression",
+                        "supporting_evidence": [evidence_id],
+                        "reproducer_evidence_id": (
+                            evidence_id
+                            if EVIDENCE_RANK[level]
+                            >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]
+                            else None
+                        ),
+                        "regression_evidence_id": (
+                            evidence_id
+                            if EVIDENCE_RANK[level]
+                            >= EVIDENCE_RANK[EvidenceLevel.EXECUTABLE]
+                            else None
+                        ),
+                        "novelty": "uncertain_novelty",
+                        "related_issues": [],
+                    },
+                }
+            )
+
+        if ceiling is not EvidenceLevel.HYPOTHESIS:
+            ledger.append(
+                {
+                    "event": "evidence_ceiling_raised",
+                    "previous": "hypothesis",
+                    "current": ceiling.value,
+                    "basis": [
+                        payload["finding"]["supporting_evidence"][0]
+                        for payload in finding_payloads
+                    ],
+                }
+            )
+        ledger.append_many(finding_payloads)
+        ledger.append(
+            {
+                "event": "run_completed",
+                "confirmed_findings": len(finding_payloads),
+                "hypotheses": len(finding_payloads),
+            }
+        )
+        projected_scope = json.loads(json.dumps(captured_scope))
+        projected_scope["evidence_ceiling"] = ceiling.value
+        (run_directory / "scope.json").write_text(json.dumps(projected_scope))
+        checkpoint = run_directory / "ledger-checkpoint.json"
+        sealed = seal_benchmark_trial(
+            run_directory,
+            trial_id=trial["trial_id"],
+            case_id=trial["case_id"],
+            seed=trial["seed"],
+            output=checkpoint,
+        )
+        trial["ledger_checkpoint"] = {
+            "algorithm": BENCHMARK_LEDGER_BINDING_ALGORITHM,
+            "run_directory": run_directory.relative_to(root).as_posix(),
+            "checkpoint_path": checkpoint.relative_to(root).as_posix(),
+            "checkpoint_sha256": sealed["checkpoint_sha256"],
+        }
+
+    def manifest(self, root: Path) -> dict:
         trial = {
             "trial_id": "T-1",
             "case_id": "CASE-1",
@@ -25,7 +195,7 @@ class EvaluationTests(unittest.TestCase):
             "ended_at": "2025-02-01T00:10:00Z",
             "model": "agent-model-version",
             "prompt_sha256": "1" * 64,
-            "tools": ["nirvana-0.4.0", "forge-1"],
+            "tools": ["nirvana-0.4.6", "forge-1"],
             "token_budget": 100000,
             "compute_hours": 0.5,
             "model_cost": 0.0,
@@ -60,25 +230,26 @@ class EvaluationTests(unittest.TestCase):
         second["trial_id"] = "T-2"
         second["run_id"] = "RUN-2"
         second["seed"] = 2
+        self.bind_trial(root, trial)
+        self.bind_trial(root, second)
         release_artifacts = []
-        if root is not None:
-            for gate in (
-                "research_prototype",
-                "web3_alpha",
-                "production_candidate",
-                "universal_expansion",
-            ):
-                artifact = root / f"{gate}.json"
-                artifact.write_text(json.dumps({"gate": gate, "reviewed": True}))
-                release_artifacts.append(
-                    {
-                        "gate": gate,
-                        "path": str(artifact),
-                        "sha256": sha256_file(artifact),
-                    }
-                )
+        for gate in (
+            "research_prototype",
+            "web3_alpha",
+            "production_candidate",
+            "universal_expansion",
+        ):
+            artifact = root / f"{gate}.json"
+            artifact.write_text(json.dumps({"gate": gate, "reviewed": True}))
+            release_artifacts.append(
+                {
+                    "gate": gate,
+                    "path": str(artifact),
+                    "sha256": sha256_file(artifact),
+                }
+            )
         return {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "benchmark_id": "blind-temporal-1",
             "cutoff": "2024-12-31T00:00:00Z",
             "track": "web3_hidden_variants",
@@ -239,7 +410,7 @@ class EvaluationTests(unittest.TestCase):
                         "ended_at": "2025-02-01T00:10:00Z",
                         "model": "agent-model-version",
                         "prompt_sha256": "1" * 64,
-                        "tools": ["nirvana-0.4.5", "forge-1"],
+                        "tools": ["nirvana-0.4.6", "forge-1"],
                         "token_budget": 10000,
                         "tokens_used": 500,
                         "cost_accounting_complete": True,
@@ -294,6 +465,8 @@ class EvaluationTests(unittest.TestCase):
         }
         manifest["cases"] = cases
         manifest["trials"] = trials
+        for trial in trials:
+            self.bind_trial(root, trial)
         return manifest
 
     def test_all_pdf_metrics_and_temporal_release_gate_are_computed(self) -> None:
@@ -302,10 +475,12 @@ class EvaluationTests(unittest.TestCase):
             path.write_text(json.dumps(self.manifest(Path(directory))))
             report = evaluate_benchmark(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.4.0")
+            self.assertEqual(report["schema_version"], "1.5.0")
             self.assertEqual(report["invalid_reasons"], [])
             self.assertTrue(report["temporal_validation"]["valid"])
             self.assertIsNone(report["ground_truth_validation"]["valid"])
+            self.assertTrue(report["finding_attribution_validation"]["valid"])
+            self.assertTrue(report["ledger_validation"]["valid"])
             self.assertEqual(report["metrics"]["validated_precision"], 1.0)
             self.assertEqual(report["metrics"]["ground_truth_recall"], 1.0)
             self.assertEqual(report["metrics"]["high_severity_precision"], 1.0)
@@ -378,7 +553,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(report["release_gates"]["closed_beta"]["passed"])
             self.assertTrue(report["release_gates"]["production_candidate"]["passed"])
 
-    def test_localised_high_report_blocks_suite_qualification(self) -> None:
+    def test_claimed_evidence_tier_must_match_checkpointed_finding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = self.qualified_manifest(root)
@@ -386,15 +561,13 @@ class EvaluationTests(unittest.TestCase):
             path = root / "benchmark.json"
             path.write_text(json.dumps(manifest))
             report = evaluate_benchmark(path)
-            self.assertTrue(report["valid"])
-            self.assertTrue(
-                report["release_gates"]["closed_beta"]["precision_thresholds_met"]
+            self.assertFalse(report["valid"])
+            self.assertFalse(report["ledger_validation"]["valid"])
+            self.assertIn(
+                "evidence level does not match",
+                " ".join(report["invalid_reasons"]),
             )
-            self.assertFalse(
-                report["suite_qualification"]["checks"][
-                    "actionable_high_critical_evidence"
-                ]
-            )
+            self.assertIsNone(report["metrics"])
             self.assertFalse(report["release_gates"]["closed_beta"]["passed"])
 
     def test_incomplete_cost_accounting_blocks_suite_qualification(self) -> None:
@@ -488,6 +661,149 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(
                 report["ground_truth_validation"]["mismatched_case_ids"],
                 ["CASE-001"],
+            )
+
+    def test_true_positive_requires_a_ground_truth_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["findings"][0]["ground_truth_id"] = None
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertFalse(report["finding_attribution_validation"]["valid"])
+            self.assertIn("lacks a ground_truth_id", " ".join(report["invalid_reasons"]))
+            self.assertIsNone(report["metrics"])
+            self.assertIsNone(report["magma"])
+
+    def test_true_positive_cannot_name_uncommitted_ground_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["findings"][0]["ground_truth_id"] = "V99"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertEqual(
+                report["finding_attribution_validation"]["invalid_findings"][0][
+                    "ground_truth_id"
+                ],
+                "V99",
+            )
+            self.assertIn(
+                "attributes to unknown ground truth V99",
+                " ".join(report["invalid_reasons"]),
+            )
+
+    def test_every_non_null_ground_truth_id_must_match_the_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            finding = manifest["trials"][0]["findings"][0]
+            finding["verdict"] = "false_positive"
+            finding["ground_truth_id"] = "V99"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertFalse(report["finding_attribution_validation"]["valid"])
+
+    def test_run_id_must_name_the_checkpointed_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["run_id"] = "FREE-STRING"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "does not match run directory",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_trial_identity_must_match_the_checkpointed_seal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["trial_id"] = "T-REWRITTEN"
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "identity does not match its checkpointed trial seal",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_manifest_cannot_invent_a_finding_absent_from_the_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            invented = json.loads(
+                json.dumps(manifest["trials"][0]["findings"][0])
+            )
+            invented["finding_id"] = "F-INVENTED"
+            manifest["trials"][0]["findings"].append(invented)
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "finding F-INVENTED is not confirmed",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_manifest_cannot_omit_a_checkpointed_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["findings"] = []
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "omits checkpointed finding F-1",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_checkpoint_requires_evidence_to_remain_replay_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            trial = manifest["trials"][0]
+            binding = trial["ledger_checkpoint"]
+            run_directory = root / binding["run_directory"]
+            ledger = EvidenceLedger(run_directory / "evidence.jsonl")
+            ledger.append(
+                {"event": "evidence_replay_failed", "evidence_id": "E-1"}
+            )
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "evidence invalidated in the later ledger",
+                " ".join(report["ledger_validation"]["violations"]),
+            )
+
+    def test_trial_binding_rejects_path_traversal_as_report_invalidity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.manifest(root)
+            manifest["trials"][0]["ledger_checkpoint"]["run_directory"] = (
+                "../outside"
+            )
+            path = root / "benchmark.json"
+            path.write_text(json.dumps(manifest))
+            report = evaluate_benchmark(path)
+            self.assertFalse(report["valid"])
+            self.assertIn(
+                "must stay inside the benchmark directory",
+                " ".join(report["ledger_validation"]["violations"]),
             )
 
 

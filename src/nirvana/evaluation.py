@@ -16,6 +16,7 @@ from .benchmark_pack import (
     resolve_case_pack_reference,
     verify_case_pack,
 )
+from .benchmark_ledger import validate_trial_ledger_bindings
 from .contracts import validate_contract
 from .models import EvidenceLevel, Severity
 from .util import atomic_write_json, sha256_file, utc_now
@@ -42,9 +43,13 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     ground_truth_validation = _validate_revealed_ground_truth(
         manifest, cases, case_pack
     )
+    finding_attribution_validation = _validate_finding_attribution(cases, trials)
+    ledger_validation = validate_trial_ledger_bindings(resolved, trials)
     invalid_reasons = [
         *temporal["violations"],
         *ground_truth_validation["violations"],
+        *finding_attribution_validation["violations"],
+        *ledger_validation["violations"],
     ]
     evaluation_valid = not invalid_reasons
     findings = [
@@ -58,15 +63,37 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         if case["eligible"]
         for vulnerability in case["ground_truth"]
     }
+    all_ground_truth = {
+        (case_id, str(vulnerability["vulnerability_id"]))
+        for case_id, case in cases.items()
+        for vulnerability in case["ground_truth"]
+    }
     detected_ground_truth = {
         (str(item["case_id"]), str(item["ground_truth_id"]))
         for item in findings
         if item["verdict"] == "true_positive" and item.get("ground_truth_id") is not None
     } & eligible_ground_truth
     reported = [item for item in findings if item["verdict"] != "suppressed"]
-    true_reports = [item for item in reported if item["verdict"] == "true_positive"]
+    true_reports = [
+        item
+        for item in reported
+        if item["verdict"] == "true_positive"
+        and item.get("ground_truth_id") is not None
+        and (
+            str(item["case_id"]),
+            str(item["ground_truth_id"]),
+        )
+        in all_ground_truth
+    ]
     high_reports = [item for item in reported if item["severity"] in {"high", "critical"}]
-    high_true = [item for item in high_reports if item["verdict"] == "true_positive"]
+    true_report_keys = {
+        (str(item["trial_id"]), str(item["finding_id"])) for item in true_reports
+    }
+    high_true = [
+        item
+        for item in high_reports
+        if (str(item["trial_id"]), str(item["finding_id"])) in true_report_keys
+    ]
     confirmed = [
         item
         for item in true_reports
@@ -155,6 +182,8 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         temporal,
         case_pack,
         ground_truth_validation,
+        finding_attribution_validation,
+        ledger_validation,
         evaluation_valid,
     )
     closed_beta = precision_thresholds_met and suite_qualification["qualified"]
@@ -250,7 +279,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.4.0",
+        "schema_version": "1.5.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
@@ -258,6 +287,8 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         "valid": evaluation_valid,
         "temporal_validation": temporal,
         "ground_truth_validation": ground_truth_validation,
+        "finding_attribution_validation": finding_attribution_validation,
+        "ledger_validation": ledger_validation,
         "invalid_reasons": invalid_reasons,
         "counts": {
             "cases": len(cases),
@@ -266,6 +297,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "reported_findings": len(reported),
             "true_reports": len(true_reports),
             "confirmed_true_reports": len(confirmed),
+            "ledger_bound_findings": ledger_validation["matched_finding_count"],
         },
         "metrics": metrics if evaluation_valid else None,
         "magma": magma if evaluation_valid else None,
@@ -311,19 +343,33 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
             raise ValueError("benchmark ground_truth must be an array")
         if not isinstance(case["eligible"], bool):
             raise ValueError("benchmark case eligible must be boolean")
+        vulnerability_ids: set[str] = set()
         for vulnerability in case["ground_truth"]:
             if {"vulnerability_id", "severity"} - vulnerability.keys():
                 raise ValueError("ground-truth vulnerabilities require id and severity")
+            vulnerability_id = vulnerability["vulnerability_id"]
+            if not isinstance(vulnerability_id, str) or not vulnerability_id:
+                raise ValueError(
+                    "ground-truth vulnerability ids must be non-empty strings"
+                )
+            if vulnerability_id in vulnerability_ids:
+                raise ValueError(
+                    f"duplicate ground-truth vulnerability id in case {case_id}: "
+                    f"{vulnerability_id}"
+                )
+            vulnerability_ids.add(vulnerability_id)
             Severity(vulnerability["severity"])
         if not isinstance(case["kloc"], (int, float)) or isinstance(case["kloc"], bool) or case["kloc"] < 0:
             raise ValueError("benchmark case kloc must be a non-negative number")
     trial_ids: set[str] = set()
+    run_ids: set[str] = set()
     for trial in manifest["trials"]:
         required = {
             "trial_id", "case_id", "run_id", "seed", "started_at", "ended_at",
             "model", "prompt_sha256", "tools", "token_budget", "compute_hours",
             "model_cost", "transcript_sha256", "environment_sha256", "findings",
             "coverage", "reached_ids", "triggered_ids", "detected_ids",
+            "ledger_checkpoint",
         }
         missing = required - trial.keys()
         if missing:
@@ -333,6 +379,23 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
         if trial["trial_id"] in trial_ids:
             raise ValueError(f"duplicate benchmark trial: {trial['trial_id']}")
         trial_ids.add(trial["trial_id"])
+        if not isinstance(trial["run_id"], str) or not trial["run_id"]:
+            raise ValueError("benchmark trial run_id must be a non-empty string")
+        if trial["run_id"] in run_ids:
+            raise ValueError(f"duplicate benchmark run id: {trial['run_id']}")
+        run_ids.add(trial["run_id"])
+        binding = trial["ledger_checkpoint"]
+        required_binding = {
+            "algorithm",
+            "run_directory",
+            "checkpoint_path",
+            "checkpoint_sha256",
+        }
+        if not isinstance(binding, dict) or set(binding) != required_binding:
+            raise ValueError(
+                "benchmark trial ledger_checkpoint requires only algorithm, "
+                "run_directory, checkpoint_path, and checkpoint_sha256"
+            )
         if not isinstance(trial["tools"], list) or not trial["tools"]:
             raise ValueError("benchmark trial tools must be a non-empty array")
         if not isinstance(trial["token_budget"], int) or isinstance(trial["token_budget"], bool) or trial["token_budget"] < 0:
@@ -351,6 +414,7 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
         for field in ("compute_hours", "model_cost"):
             if not isinstance(trial[field], (int, float)) or isinstance(trial[field], bool) or trial[field] < 0:
                 raise ValueError(f"benchmark {field} must be a non-negative number")
+        finding_ids: set[str] = set()
         for finding in trial["findings"]:
             required_finding = {
                 "finding_id", "verdict", "severity", "evidence_level", "confidence",
@@ -362,6 +426,21 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
                 raise ValueError(f"benchmark finding lacks required fields: {sorted(missing_finding)}")
             if finding["verdict"] not in {"true_positive", "false_positive", "suppressed"}:
                 raise ValueError("benchmark finding verdict is invalid")
+            if not isinstance(finding["finding_id"], str) or not finding["finding_id"]:
+                raise ValueError("benchmark finding_id must be a non-empty string")
+            if finding["finding_id"] in finding_ids:
+                raise ValueError(
+                    f"duplicate benchmark finding in trial {trial['trial_id']}: "
+                    f"{finding['finding_id']}"
+                )
+            finding_ids.add(finding["finding_id"])
+            ground_truth_id = finding["ground_truth_id"]
+            if ground_truth_id is not None and (
+                not isinstance(ground_truth_id, str) or not ground_truth_id
+            ):
+                raise ValueError(
+                    "benchmark ground_truth_id must be null or a non-empty string"
+                )
             Severity(finding["severity"])
             EvidenceLevel(finding["evidence_level"])
             confidence = finding["confidence"]
@@ -569,6 +648,79 @@ def _validate_revealed_ground_truth(
     }
 
 
+def _validate_finding_attribution(
+    cases: dict[str, dict[str, Any]], trials: list[dict[str, Any]]
+) -> dict[str, Any]:
+    ground_truth_by_case = {
+        case_id: {
+            str(vulnerability["vulnerability_id"])
+            for vulnerability in case["ground_truth"]
+        }
+        for case_id, case in cases.items()
+    }
+    violations: list[str] = []
+    true_positive_count = 0
+    attributed_true_positive_count = 0
+    non_null_attribution_count = 0
+    matched_attribution_count = 0
+    invalid_findings: list[dict[str, Any]] = []
+    for trial in trials:
+        trial_id = str(trial["trial_id"])
+        case_id = str(trial["case_id"])
+        committed_ids = ground_truth_by_case[case_id]
+        for finding in trial["findings"]:
+            finding_id = str(finding["finding_id"])
+            ground_truth_id = finding.get("ground_truth_id")
+            is_true_positive = finding["verdict"] == "true_positive"
+            true_positive_count += is_true_positive
+            if ground_truth_id is None:
+                if is_true_positive:
+                    reason = (
+                        f"trial {trial_id} true-positive finding {finding_id} lacks a "
+                        "ground_truth_id"
+                    )
+                    violations.append(reason)
+                    invalid_findings.append(
+                        {
+                            "trial_id": trial_id,
+                            "finding_id": finding_id,
+                            "ground_truth_id": None,
+                            "reason": reason,
+                        }
+                    )
+                continue
+
+            non_null_attribution_count += 1
+            if str(ground_truth_id) not in committed_ids:
+                reason = (
+                    f"trial {trial_id} finding {finding_id} attributes to unknown "
+                    f"ground truth {ground_truth_id} for case {case_id}"
+                )
+                violations.append(reason)
+                invalid_findings.append(
+                    {
+                        "trial_id": trial_id,
+                        "finding_id": finding_id,
+                        "ground_truth_id": str(ground_truth_id),
+                        "reason": reason,
+                    }
+                )
+                continue
+            matched_attribution_count += 1
+            attributed_true_positive_count += is_true_positive
+
+    return {
+        "valid": not violations,
+        "finding_count": sum(len(trial["findings"]) for trial in trials),
+        "true_positive_count": true_positive_count,
+        "attributed_true_positive_count": attributed_true_positive_count,
+        "non_null_attribution_count": non_null_attribution_count,
+        "matched_attribution_count": matched_attribution_count,
+        "invalid_findings": invalid_findings,
+        "violations": violations,
+    }
+
+
 def _suite_qualification(
     manifest: dict[str, Any],
     cases: dict[str, dict[str, Any]],
@@ -577,6 +729,8 @@ def _suite_qualification(
     temporal: dict[str, Any],
     case_pack: dict[str, Any] | None,
     ground_truth_validation: dict[str, Any],
+    finding_attribution_validation: dict[str, Any],
+    ledger_validation: dict[str, Any],
     evaluation_valid: bool,
 ) -> dict[str, Any]:
     eligible = {
@@ -626,6 +780,11 @@ def _suite_qualification(
         ),
         "committed_ground_truth_matches_reveal": ground_truth_validation["valid"]
         is True,
+        "findings_match_committed_ground_truth": finding_attribution_validation[
+            "valid"
+        ]
+        is True,
+        "checkpointed_trial_ledgers": ledger_validation["valid"] is True,
         "actionable_high_critical_evidence": actionable_high_reports
         == len(high_reports),
         "complete_trial_cost_accounting": fully_accounted_trials == len(trials),
@@ -652,6 +811,14 @@ def _suite_qualification(
             "requires every revealed eligibility flag, vulnerable/benign class, label, "
             "and ground-truth record to match its pre-trial commitment"
         ),
+        "findings_match_committed_ground_truth": (
+            "requires every true positive to identify committed ground truth and every "
+            "non-null attribution to match that case's committed vulnerability ids"
+        ),
+        "checkpointed_trial_ledgers": (
+            "requires every trial and complete finding set to match a verified Nirvana "
+            "ledger checkpoint with replay-verified evidence at the claimed tier"
+        ),
         "actionable_high_critical_evidence": (
             "requires executable-or-stronger evidence for every High/Critical report"
         ),
@@ -662,7 +829,7 @@ def _suite_qualification(
     }
     reasons = [reason_by_check[name] for name, passed in checks.items() if not passed]
     return {
-        "qualification_version": "nirvana-closed-beta-v1",
+        "qualification_version": "nirvana-closed-beta-v2",
         "qualified": all(checks.values()),
         "requirements": {
             "minimum_eligible_vulnerable_cases": MINIMUM_VULNERABLE_CASES,
@@ -670,6 +837,8 @@ def _suite_qualification(
             "minimum_distinct_seeds_per_eligible_case": MINIMUM_DISTINCT_SEEDS_PER_CASE,
             "independently_authored_encrypted_case_pack": True,
             "committed_ground_truth_reveal": True,
+            "committed_ground_truth_attribution": True,
+            "checkpointed_trial_ledgers": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
             "complete_trial_cost_accounting": True,
         },
@@ -689,6 +858,14 @@ def _suite_qualification(
             ],
             "matched_ground_truth_commitments": ground_truth_validation[
                 "matched_case_count"
+            ],
+            "attributed_true_positive_findings": finding_attribution_validation[
+                "attributed_true_positive_count"
+            ],
+            "verified_trial_ledgers": ledger_validation["verified_trial_count"],
+            "ledger_bound_findings": ledger_validation["matched_finding_count"],
+            "externally_anchored_trial_ledgers": ledger_validation[
+                "externally_anchored_trial_count"
             ],
         },
         "checks": checks,
