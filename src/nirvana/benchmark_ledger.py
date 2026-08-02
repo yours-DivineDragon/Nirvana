@@ -2,19 +2,28 @@ from __future__ import annotations
 
 import json
 import stat
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .contracts import validate_contract
+from .coverage import COVERAGE_DIMENSIONS, CoverageManifest, reconstruct_coverage
 from .intake import ScopeManifest, validate_scope_against_ledger
 from .ledger import EvidenceLedger
-from .models import EVIDENCE_RANK, EvidenceLevel, EvidenceRecord, Finding
+from .models import (
+    EVIDENCE_RANK,
+    EvidenceLevel,
+    EvidenceRecord,
+    Finding,
+    NoveltyClass,
+)
 from .util import canonical_json, sha256_bytes, sha256_file
 
 
 BENCHMARK_LEDGER_BINDING_ALGORITHM = "nirvana-ledger-checkpoint-v1"
 MAX_BENCHMARK_LEDGER_BYTES = 256 * 1024 * 1024
 MAX_BENCHMARK_CHECKPOINT_BYTES = 1024 * 1024
+MAX_BENCHMARK_COVERAGE_BYTES = 16 * 1024 * 1024
 
 
 def seal_benchmark_trial(
@@ -60,6 +69,7 @@ def seal_benchmark_trial(
     scope = ScopeManifest.from_dict(scope_value)
     validate_scope_against_ledger(scope, records)
     findings, _, finding_states, violations = _checkpointed_findings(records, scope)
+    coverage_state = _checkpointed_coverage(resolved_run, records)
     if violations:
         raise ValueError(
             "benchmark trial findings are not ledger-valid: " + "; ".join(violations)
@@ -81,6 +91,7 @@ def seal_benchmark_trial(
             },
             findings,
             finding_states,
+            coverage_state,
         )
         if seal_violations:
             raise ValueError(
@@ -91,7 +102,7 @@ def seal_benchmark_trial(
         seal_record_hash = existing_seals[0]["record_hash"]
     else:
         seal = {
-            "schema_version": "1.1.0",
+            "schema_version": "1.2.0",
             "event": "benchmark_trial_sealed",
             "trial_id": trial_id,
             "case_id": case_id,
@@ -102,6 +113,8 @@ def seal_benchmark_trial(
             "finding_set_sha256": sha256_bytes(
                 canonical_json(finding_claims).encode("utf-8")
             ),
+            "coverage_sha256": coverage_state["coverage_sha256"],
+            "coverage": coverage_state["coverage"],
         }
         validate_contract(seal, "benchmark-trial-seal.schema.json")
         seal_record_hash = ledger.append(seal)["record_hash"]
@@ -148,6 +161,8 @@ def validate_trial_ledger_bindings(
                 "checkpointed_finding_ids": [],
                 "matched_finding_ids": [],
                 "derived_findings": [],
+                "coverage_sha256": None,
+                "derived_coverage": None,
                 "replay_verified_evidence_ids": [],
                 "post_checkpoint_invalidated_evidence_ids": [],
                 "violations": trial_violations,
@@ -233,6 +248,7 @@ def _validate_trial_binding(
     findings, replay_verified, finding_states, semantic_violations = _checkpointed_findings(
         records, scope
     )
+    coverage_state = _checkpointed_coverage(run_directory, records)
     supporting_evidence = {
         evidence_id
         for finding in findings.values()
@@ -258,9 +274,17 @@ def _validate_trial_binding(
             f"{post_checkpoint_invalidated}"
         )
     seal_sequence, seal_violations = _validate_trial_seal(
-        records, trial, findings, finding_states
+        records, trial, findings, finding_states, coverage_state
     )
     semantic_violations.extend(seal_violations)
+    if trial["coverage_sha256"] != coverage_state["coverage_sha256"]:
+        semantic_violations.append(
+            f"trial {trial_id} coverage hash does not match its checkpointed run"
+        )
+    if trial["coverage"] != coverage_state["coverage"]:
+        semantic_violations.append(
+            f"trial {trial_id} coverage values do not match its checkpointed run"
+        )
     claimed = {str(item["finding_id"]): item for item in trial["findings"]}
     checkpointed_ids = set(findings)
     claimed_ids = set(claimed)
@@ -310,6 +334,24 @@ def _validate_trial_binding(
                 "match its checkpointed regression evidence"
             )
             matches = False
+        if claim["novel"] is not state["novel"]:
+            semantic_violations.append(
+                f"trial {trial_id} finding {finding_id} novel state does not match "
+                "its checkpointed novelty assessment"
+            )
+            matches = False
+        if claim["duplicate"] is not state["duplicate"]:
+            semantic_violations.append(
+                f"trial {trial_id} finding {finding_id} duplicate state does not "
+                "match its checkpointed novelty assessment"
+            )
+            matches = False
+        if claim["time_to_finding_seconds"] != state["time_to_finding_seconds"]:
+            semantic_violations.append(
+                f"trial {trial_id} finding {finding_id} time-to-finding does not "
+                "match its checkpointed ledger timestamps"
+            )
+            matches = False
         if matches:
             matched_ids.append(finding_id)
 
@@ -332,6 +374,8 @@ def _validate_trial_binding(
         "checkpointed_finding_ids": sorted(checkpointed_ids),
         "matched_finding_ids": matched_ids,
         "derived_findings": _finding_claims(findings, finding_states),
+        "coverage_sha256": coverage_state["coverage_sha256"],
+        "derived_coverage": coverage_state["coverage"],
         "replay_verified_evidence_ids": sorted(replay_verified),
         "post_checkpoint_invalidated_evidence_ids": post_checkpoint_invalidated,
         "violations": semantic_violations,
@@ -344,6 +388,7 @@ def _validate_trial_seal(
     trial: dict[str, Any],
     findings: dict[str, Finding],
     finding_states: dict[str, dict[str, Any]],
+    coverage_state: dict[str, Any],
 ) -> tuple[int | None, list[str]]:
     trial_id = str(trial["trial_id"])
     matches = [
@@ -393,6 +438,14 @@ def _validate_trial_seal(
         violations.append(
             f"trial {trial_id} trial-seal finding-set hash does not match the ledger"
         )
+    if seal["coverage_sha256"] != coverage_state["coverage_sha256"]:
+        violations.append(
+            f"trial {trial_id} trial-seal coverage hash does not match the ledger"
+        )
+    if seal["coverage"] != coverage_state["coverage"]:
+        violations.append(
+            f"trial {trial_id} trial-seal coverage values do not match the ledger"
+        )
     return int(record["sequence"]), violations
 
 
@@ -409,6 +462,17 @@ def _finding_claims(
             "reproduced": finding_states[finding.finding_id]["reproduced"],
             "patch_tests_passed": finding_states[finding.finding_id][
                 "patch_tests_passed"
+            ],
+            "novelty_classification": finding_states[finding.finding_id][
+                "novelty_classification"
+            ],
+            "novelty_corpus_sha256": finding_states[finding.finding_id][
+                "novelty_corpus_sha256"
+            ],
+            "novel": finding_states[finding.finding_id]["novel"],
+            "duplicate": finding_states[finding.finding_id]["duplicate"],
+            "time_to_finding_seconds": finding_states[finding.finding_id][
+                "time_to_finding_seconds"
             ],
         }
         for finding in sorted(findings.values(), key=lambda item: item.finding_id)
@@ -428,12 +492,19 @@ def _checkpointed_findings(
     findings: dict[str, Finding] = {}
     verified_at_confirmation: dict[str, set[str]] = {}
     ceiling_at_confirmation: dict[str, EvidenceLevel] = {}
+    finding_timestamps: dict[str, datetime] = {}
+    novelty_assessments: dict[str, dict[str, Any]] = {}
+    violations: list[str] = []
+    scope_records = [
+        record
+        for record in records
+        if record["payload"].get("event") == "scope_captured"
+    ]
+    if len(scope_records) != 1:
+        raise ValueError("checkpointed ledger must contain exactly one captured scope")
+    scope_timestamp = _ledger_timestamp(scope_records[0], "scope-captured")
     current_ceiling = EvidenceLevel(
-        next(
-            record["payload"]["scope"]["evidence_ceiling"]
-            for record in records
-            if record["payload"].get("event") == "scope_captured"
-        )
+        scope_records[0]["payload"]["scope"]["evidence_ceiling"]
     )
 
     for record in records:
@@ -457,19 +528,57 @@ def _checkpointed_findings(
                     f"duplicate checkpointed finding: {item.finding_id}"
                 )
             findings[item.finding_id] = item
+            finding_timestamps[item.finding_id] = _ledger_timestamp(
+                record, f"finding {item.finding_id} confirmation"
+            )
             verified_at_confirmation[item.finding_id] = {
                 evidence_id
                 for evidence_id, status in latest_replay.items()
                 if status == "evidence_verified"
             }
             ceiling_at_confirmation[item.finding_id] = current_ceiling
+        elif event == "novelty_assessed":
+            finding_id = payload.get("finding_id")
+            if not isinstance(finding_id, str) or not finding_id:
+                violations.append(
+                    "checkpointed novelty assessment lacks a finding id"
+                )
+                continue
+            if finding_id not in findings:
+                violations.append(
+                    f"checkpointed novelty assessment precedes or lacks confirmed "
+                    f"finding {finding_id}"
+                )
+                continue
+            try:
+                classification = NoveltyClass(payload["classification"])
+            except (KeyError, ValueError, TypeError):
+                violations.append(
+                    f"checkpointed finding {finding_id} has an invalid novelty "
+                    "classification"
+                )
+                continue
+            corpus_sha256 = payload.get("corpus_sha256")
+            if (
+                not isinstance(corpus_sha256, str)
+                or len(corpus_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in corpus_sha256)
+            ):
+                violations.append(
+                    f"checkpointed finding {finding_id} novelty assessment lacks a "
+                    "valid corpus hash"
+                )
+                continue
+            novelty_assessments[finding_id] = {
+                "classification": classification,
+                "corpus_sha256": corpus_sha256,
+            }
 
     currently_verified = {
         evidence_id
         for evidence_id, status in latest_replay.items()
         if status == "evidence_verified"
     }
-    violations: list[str] = []
     finding_states: dict[str, dict[str, Any]] = {}
     for finding_id, finding in findings.items():
         reproducer = (
@@ -482,6 +591,14 @@ def _checkpointed_findings(
             if finding.regression_evidence_id is not None
             else None
         )
+        novelty = novelty_assessments.get(finding_id)
+        time_to_finding = (
+            finding_timestamps[finding_id] - scope_timestamp
+        ).total_seconds()
+        if time_to_finding < 0:
+            violations.append(
+                f"checkpointed finding {finding_id} predates the captured scope"
+            )
         finding_states[finding_id] = {
             "reproduced": bool(
                 reproducer is not None
@@ -496,6 +613,23 @@ def _checkpointed_findings(
                     and regression.metadata.get("negative_control_verified") is True
                 )
             ),
+            "novelty_classification": (
+                novelty["classification"].value if novelty is not None else None
+            ),
+            "novelty_corpus_sha256": (
+                novelty["corpus_sha256"] if novelty is not None else None
+            ),
+            "novel": (
+                novelty["classification"] is NoveltyClass.NOVEL_MECHANISM
+                if novelty is not None
+                else None
+            ),
+            "duplicate": (
+                novelty["classification"] is NoveltyClass.EXACT_DUPLICATE
+                if novelty is not None
+                else None
+            ),
+            "time_to_finding_seconds": max(0.0, time_to_finding),
         }
         supporting = set(finding.supporting_evidence)
         unknown = sorted(supporting - evidence.keys())
@@ -561,6 +695,77 @@ def _checkpointed_findings(
             "checkpointed findings exceed the ledger-derived run evidence ceiling"
         )
     return findings, currently_verified, finding_states, violations
+
+
+def _checkpointed_coverage(
+    run_directory: Path, records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    schedules = [
+        record["payload"]
+        for record in records
+        if record["payload"].get("event") == "coverage_schedule_created"
+    ]
+    if len(schedules) != 1:
+        raise ValueError(
+            "checkpointed ledger must bind exactly one coverage schedule"
+        )
+    expected_path = _regular_file(
+        run_directory / "coverage-initial.json",
+        MAX_BENCHMARK_COVERAGE_BYTES,
+        "benchmark trial initial coverage schedule",
+    )
+    declared_path = Path(str(schedules[0].get("artifact_path", "")))
+    if declared_path.resolve(strict=True) != expected_path:
+        raise ValueError(
+            "checkpointed coverage schedule artifact escapes the run directory"
+        )
+    if sha256_file(expected_path) != schedules[0].get("coverage_sha256"):
+        raise ValueError(
+            "checkpointed initial coverage schedule does not match the ledger"
+        )
+    value = json.loads(expected_path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("initial coverage schedule must be one JSON object")
+    tracked = value.get("tracked")
+    if not isinstance(tracked, dict) or any(
+        not isinstance(items, list)
+        or any(not isinstance(item, str) for item in items)
+        for items in tracked.values()
+    ):
+        raise ValueError("initial coverage tracked nodes must be string arrays")
+    initial = CoverageManifest.from_dict(value)
+    if initial.graph_sha256 != schedules[0].get("graph_sha256"):
+        raise ValueError(
+            "checkpointed coverage schedule targets a different semantic graph"
+        )
+    reconstructed = reconstruct_coverage(initial, records)
+    document = reconstructed.to_dict()
+    completeness = document["completeness"]
+    if tuple(completeness) != COVERAGE_DIMENSIONS:
+        raise ValueError(
+            "checkpointed coverage does not expose every runtime dimension"
+        )
+    return {
+        "coverage_sha256": sha256_bytes(
+            canonical_json(document).encode("utf-8")
+        ),
+        "coverage": completeness,
+    }
+
+
+def _ledger_timestamp(record: dict[str, Any], label: str) -> datetime:
+    value = record.get("timestamp")
+    if not isinstance(value, str):
+        raise ValueError(f"checkpointed {label} record lacks a timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(
+            f"checkpointed {label} record has an invalid timestamp"
+        ) from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"checkpointed {label} timestamp lacks a UTC offset")
+    return parsed.astimezone(UTC)
 
 
 def _relative_path(

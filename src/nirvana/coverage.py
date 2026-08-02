@@ -24,6 +24,15 @@ THREAT_LENSES = (
     "configuration-and-deployment",
 )
 
+COVERAGE_DIMENSIONS = (
+    "assets",
+    "authority_paths",
+    "state_transitions",
+    "trust_boundaries",
+    "dynamic_states",
+    "flow_threat_tasks",
+)
+
 
 @dataclass(slots=True)
 class BusinessFlow:
@@ -288,37 +297,127 @@ class CoverageBoard:
         return updated
 
     def _reconstruct(self, initial: CoverageManifest) -> CoverageManifest:
-        tasks = {item.task_id: item for item in initial.tasks}
-        for record in self.ledger.records():
-            payload = record["payload"]
-            if payload.get("event") != "coverage_updated":
-                continue
-            task = tasks.get(str(payload.get("task_id")))
-            if task is None:
-                raise ValueError("coverage ledger references an unknown task")
-            task.status = str(payload["status"])
-            task.evidence_ids = [str(item) for item in payload.get("evidence_ids", [])]
-            task.notes = [str(item) for item in payload.get("notes", [])]
-            initial.tracked["dynamic_states_reached"] = sorted(
-                set(initial.tracked.get("dynamic_states_reached", []))
-                | {str(item) for item in payload.get("reached_nodes", [])}
+        return reconstruct_coverage(initial, self.ledger.records())
+
+
+def reconstruct_coverage(
+    initial: CoverageManifest, records: list[dict[str, Any]]
+) -> CoverageManifest:
+    """Rebuild and validate coverage from its immutable schedule and ledger events."""
+
+    if any(
+        task.status != "scheduled" or task.evidence_ids
+        for task in initial.tasks
+    ):
+        raise ValueError("initial coverage schedule must contain only unclaimed tasks")
+    tasks = {item.task_id: item for item in initial.tasks}
+    known_nodes = {
+        node for values in initial.tracked.values() for node in values
+    } | {node for task in initial.tasks for node in task.graph_slice}
+    latest_replay: dict[str, str] = {}
+    evidence_hypotheses: dict[str, Any] = {}
+    for record in records:
+        payload = record["payload"]
+        event = payload.get("event")
+        if event == "evidence_recorded":
+            evidence = payload.get("evidence")
+            if not isinstance(evidence, dict) or not isinstance(
+                evidence.get("evidence_id"), str
+            ):
+                raise ValueError("coverage ledger contains malformed evidence")
+            evidence_hypotheses[str(evidence["evidence_id"])] = evidence.get(
+                "hypothesis_id"
             )
-        records = self.ledger.records()
-        evidence_hypotheses = {
-            str(record["payload"]["evidence"]["evidence_id"]): record["payload"]["evidence"].get("hypothesis_id")
-            for record in records
-            if record["payload"].get("event") == "evidence_recorded"
+            continue
+        if event in {"evidence_verified", "evidence_replay_failed"}:
+            latest_replay[str(payload["evidence_id"])] = str(event)
+            continue
+        if event != "coverage_updated":
+            continue
+
+        task = tasks.get(str(payload.get("task_id")))
+        if task is None:
+            raise ValueError("coverage ledger references an unknown task")
+        status = payload.get("status")
+        if status not in {"in_progress", "covered", "blocked"}:
+            raise ValueError("coverage ledger contains an invalid task status")
+        evidence_ids = payload.get("evidence_ids", [])
+        notes = payload.get("notes", [])
+        reached_nodes = payload.get("reached_nodes", [])
+        if (
+            not isinstance(evidence_ids, list)
+            or any(not isinstance(item, str) for item in evidence_ids)
+            or len(set(evidence_ids)) != len(evidence_ids)
+        ):
+            raise ValueError("coverage ledger evidence ids must be a unique string array")
+        if not isinstance(notes, list) or any(
+            not isinstance(item, str) for item in notes
+        ):
+            raise ValueError("coverage ledger notes must be a string array")
+        if not isinstance(reached_nodes, list) or any(
+            not isinstance(item, str) for item in reached_nodes
+        ):
+            raise ValueError("coverage ledger reached nodes must be a string array")
+        verified_at_update = {
+            evidence_id
+            for evidence_id, replay in latest_replay.items()
+            if replay == "evidence_verified"
         }
-        tested = sorted(
-            {
-                str(evidence_hypotheses[evidence_id])
-                for evidence_id in _currently_verified_evidence(records)
-                if evidence_hypotheses.get(evidence_id) is not None
-            }
+        unknown_evidence = sorted(set(evidence_ids) - verified_at_update)
+        if unknown_evidence:
+            raise ValueError(
+                f"coverage ledger update lacks replay-verified evidence: {unknown_evidence}"
+            )
+        if status == "covered" and not evidence_ids and not any(
+            note.startswith("negative-analysis:")
+            and len(note) > len("negative-analysis:") + 20
+            for note in notes
+        ):
+            raise ValueError(
+                "covered coverage tasks require replay-verified evidence or a "
+                "concrete negative-analysis note"
+            )
+        unknown_nodes = sorted(set(reached_nodes) - known_nodes)
+        if unknown_nodes:
+            raise ValueError(
+                f"coverage ledger update references unknown graph nodes: {unknown_nodes}"
+            )
+        task.status = str(status)
+        task.evidence_ids = list(evidence_ids)
+        task.notes = list(notes)
+        initial.tracked["dynamic_states_reached"] = sorted(
+            set(initial.tracked.get("dynamic_states_reached", []))
+            | set(reached_nodes)
         )
-        initial.tracked["hypotheses_tested"] = tested
-        initial.completeness = _completeness(initial.tasks, initial.tracked)
-        return initial
+
+    currently_verified = {
+        evidence_id
+        for evidence_id, replay in latest_replay.items()
+        if replay == "evidence_verified"
+    }
+    invalidated = sorted(
+        {
+            evidence_id
+            for task in initial.tasks
+            for evidence_id in task.evidence_ids
+            if evidence_id not in currently_verified
+        }
+    )
+    if invalidated:
+        raise ValueError(
+            f"coverage ledger relies on evidence that is no longer replay-verified: {invalidated}"
+        )
+    initial.tracked["hypotheses_tested"] = sorted(
+        {
+            str(evidence_hypotheses[evidence_id])
+            for evidence_id in currently_verified
+            if evidence_hypotheses.get(evidence_id) is not None
+        }
+    )
+    initial.completeness = _completeness(initial.tasks, initial.tracked)
+    if tuple(initial.completeness) != COVERAGE_DIMENSIONS:
+        raise ValueError("coverage completeness dimensions do not match the runtime contract")
+    return initial
 
 
 def _bounded_reachable(
@@ -360,14 +459,15 @@ def _completeness(
 ) -> dict[str, float]:
     total = len(tasks)
     covered = sum(item.status == "covered" for item in tasks)
-    return {
-        "flow_threat_tasks": covered / total if total else 0.0,
+    values = {
         "assets": _node_coverage(tasks, tracked.get("assets", [])),
         "authority_paths": _node_coverage(tasks, tracked.get("authority_paths", [])),
         "state_transitions": _node_coverage(tasks, tracked.get("state_transitions", [])),
         "trust_boundaries": _node_coverage(tasks, tracked.get("trust_boundaries", [])),
         "dynamic_states": 1.0 if tracked.get("dynamic_states_reached") else 0.0,
+        "flow_threat_tasks": covered / total if total else 0.0,
     }
+    return {dimension: values[dimension] for dimension in COVERAGE_DIMENSIONS}
 
 
 def _node_coverage(tasks: list[CoverageTask], nodes: list[str]) -> float:

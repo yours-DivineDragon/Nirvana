@@ -3,9 +3,9 @@
   "$id": "https://nirvana.security/schemas/benchmark-trial-seal.schema.json",
   "title": "Nirvana benchmark trial ledger seal",
   "type": "object",
-  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256"],
+  "required": ["schema_version", "event", "trial_id", "case_id", "run_id", "seed", "ledger_sequence_before_seal", "findings", "finding_set_sha256", "coverage_sha256", "coverage"],
   "properties": {
-    "schema_version": {"const": "1.1.0"},
+    "schema_version": {"const": "1.2.0"},
     "event": {"const": "benchmark_trial_sealed"},
     "trial_id": {"type": "string", "minLength": 1},
     "case_id": {"type": "string", "minLength": 1},
@@ -16,7 +16,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["finding_id", "severity", "evidence_level", "reproducer_evidence_id", "regression_evidence_id", "reproduced", "patch_tests_passed"],
+        "required": ["finding_id", "severity", "evidence_level", "reproducer_evidence_id", "regression_evidence_id", "reproduced", "patch_tests_passed", "novelty_classification", "novelty_corpus_sha256", "novel", "duplicate", "time_to_finding_seconds"],
         "properties": {
           "finding_id": {"type": "string", "pattern": "^F-[A-Za-z0-9._-]+$"},
           "severity": {"enum": ["informational", "low", "medium", "high", "critical"]},
@@ -24,12 +24,31 @@
           "reproducer_evidence_id": {"type": ["string", "null"], "pattern": "^E-[A-Za-z0-9._-]+$"},
           "regression_evidence_id": {"type": ["string", "null"], "pattern": "^E-[A-Za-z0-9._-]+$"},
           "reproduced": {"type": "boolean"},
-          "patch_tests_passed": {"type": ["boolean", "null"]}
+          "patch_tests_passed": {"type": ["boolean", "null"]},
+          "novelty_classification": {"type": ["string", "null"], "enum": ["exact_duplicate", "known_unfixed_issue", "variant", "new_instance", "novel_mechanism", "uncertain_novelty", null]},
+          "novelty_corpus_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+          "novel": {"type": ["boolean", "null"]},
+          "duplicate": {"type": ["boolean", "null"]},
+          "time_to_finding_seconds": {"type": "number", "minimum": 0}
         },
         "additionalProperties": false
       }
     },
-    "finding_set_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+    "finding_set_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "coverage_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "coverage": {
+      "type": "object",
+      "required": ["assets", "authority_paths", "state_transitions", "trust_boundaries", "dynamic_states", "flow_threat_tasks"],
+      "properties": {
+        "assets": {"type": "number", "minimum": 0, "maximum": 1},
+        "authority_paths": {"type": "number", "minimum": 0, "maximum": 1},
+        "state_transitions": {"type": "number", "minimum": 0, "maximum": 1},
+        "trust_boundaries": {"type": "number", "minimum": 0, "maximum": 1},
+        "dynamic_states": {"type": "number", "minimum": 0, "maximum": 1},
+        "flow_threat_tasks": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

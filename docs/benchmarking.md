@@ -5,10 +5,10 @@ Nirvana separates a valid measurement from a maturity claim. A small or explorat
 `benchmark-report.json` exposes the distinction directly:
 
 - `release_gates.closed_beta.precision_thresholds_met` applies the founding specification's 80% overall and 90% High/Critical precision targets.
-- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v3` operational floors.
+- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v4` operational floors.
 - `release_gates.closed_beta.passed` is true only when both are true.
 
-The v3 operational floors are project policy, not a claim that a particular sample size proves general performance:
+The v4 operational floors are project policy, not a claim that a particular sample size proves general performance:
 
 | Qualification check | Floor |
 |---|---:|
@@ -19,7 +19,8 @@ The v3 operational floors are project policy, not a claim that a particular samp
 | Case sizing | Every KLOC denominator matches its independently authored case-pack value |
 | Finding attribution | Every true positive names committed ground truth; every non-null id belongs to that case |
 | Run provenance | Every trial and complete finding set matches a sealed ledger checkpoint; confirmed findings cannot be suppressed |
-| Derived outcomes | Reproduction and patch-test state match replay-verified reproducer and regression evidence |
+| Derived outcomes | Reproduction, patch-test, novelty/duplicate, time-to-finding, and six-dimension coverage state match the checkpointed run |
+| Novelty adjudication | Every checkpointed finding has a corpus-bound `novelty_assessed` event before sealing |
 | High/Critical evidence | Executable or stronger for every report |
 | Trial accounting | Complete tokens, budget, compute, and model cost |
 
@@ -95,7 +96,7 @@ nirvana benchmark seal-trial ./nirvana-runs/<run-id> \
   --output ./nirvana-runs/<run-id>/benchmark-trial-checkpoint.json
 ```
 
-The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.1 records each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction state, and verified patched-control state in a `benchmark_trial_sealed` event. It refuses missing or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256 and relative paths into manifest v1.2:
+The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.2 records each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction and verified patched-control state, latest novelty classification and corpus hash, exact-duplicate/novel booleans, and elapsed ledger time from `scope_captured` to `finding_confirmed`. It also reconstructs all six coverage dimensions from the hash-bound `coverage-initial.json` plus checkpointed `coverage_updated` events and seals the canonical final projection. It refuses missing coverage provenance or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256, derived coverage digest and values, and relative paths into manifest v1.3:
 
 ```json
 {
@@ -104,11 +105,22 @@ The command derives the complete `finding_confirmed` set from the ledger. Trial 
     "run_directory": "nirvana-runs/<run-id>",
     "checkpoint_path": "nirvana-runs/<run-id>/benchmark-trial-checkpoint.json",
     "checkpoint_sha256": "<SHA-256>"
+  },
+  "coverage_sha256": "<SEAL coverage_sha256>",
+  "coverage": {
+    "assets": 1.0,
+    "authority_paths": 1.0,
+    "state_transitions": 1.0,
+    "trust_boundaries": 1.0,
+    "dynamic_states": 0.0,
+    "flow_threat_tasks": 0.75
   }
 }
 ```
 
-Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, invented findings, omitted checkpointed findings, severity or evidence-tier drift, operator-declared reproduction or patch state that differs from the ledger, unverified supporting evidence, and evidence invalidated by a later replay failure. This is a one-to-one binding: every checkpointed finding must be adjudicated `true_positive` or `false_positive`; `suppressed` cannot remove it from the precision denominator. Unconfirmed analyst-queue items stay outside the benchmark finding set. Manifest v1.2 and trial seal v1.1 are intentionally incompatible with older unbound claims.
+Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, invented findings, omitted checkpointed findings, severity or evidence-tier drift, operator-declared reproduction, patch, novelty, duplicate, timing, or coverage state that differs from the ledger, unverified supporting evidence, and evidence invalidated by a later replay failure. It computes coverage completeness over all six runtime dimensions; a four-field subset cannot raise the mean. This is a one-to-one binding: every checkpointed finding must be adjudicated `true_positive` or `false_positive`; `suppressed` cannot remove it from the precision denominator. Unconfirmed analyst-queue items stay outside the benchmark finding set.
+
+Run novelty assessment before sealing when the result will support a maturity claim. `novel` is derived only from `novel_mechanism`, while `duplicate` is derived only from `exact_duplicate`. A finding with no checkpointed `novelty_assessed` event is sealed with both values as `null`: the pilot remains valid, but novel validated yield and duplicate rate stay undefined as applicable, and closed-beta v4 qualification fails. Manifest v1.3 and trial seal v1.2 are intentionally incompatible with older unbound claims.
 
 The checkpoint remains a tamper-evident local commitment until its hash is published to an independent trusted store. Nirvana reports whether the checkpoint contains an `external_anchor`, but does not claim to verify the honesty, independence, or publication time of that outside service.
 
