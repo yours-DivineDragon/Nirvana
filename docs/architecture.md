@@ -27,7 +27,7 @@ Every mutable conclusion is an append-only ledger event. JSON artifacts are proj
 | Adversarial validation | Devil's Advocate, Rescue Critic, rejection archive, causal deduplication, novelty | Typed ledger workflows implemented |
 | Differential loop | Compare, repeat, fuzz, classify, minimize, feed back, attach, disclose | Implemented; mismatch attachments are `localised` leads only |
 | Output and learning | Confirmed report, analyst queue, rejection archive, learning bundle, detector promotion gates | Implemented; detector source is never changed automatically |
-| Evaluation | Temporal split, independent encrypted case packs, hidden variants, Magma signals, eleven metrics, and sample-qualified release gates | Dependency-free evaluator implemented; claims still require real blind benchmark data beyond the shipped templates |
+| Evaluation | Temporal split, independent encrypted case packs, canonical ground-truth reveal commitments, hidden variants, Magma signals, eleven metrics, and sample-qualified release gates | Dependency-free evaluator implemented; claims still require real blind benchmark data beyond the shipped templates |
 
 ## Security Semantic Graph
 

@@ -9,7 +9,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from .benchmark_pack import resolve_case_pack_reference, verify_case_pack
+from .benchmark_pack import (
+    GROUND_TRUTH_COMMITMENT_ALGORITHM,
+    canonical_ground_truth_document,
+    ground_truth_commitment_sha256,
+    resolve_case_pack_reference,
+    verify_case_pack,
+)
 from .contracts import validate_contract
 from .models import EvidenceLevel, Severity
 from .util import atomic_write_json, sha256_file, utc_now
@@ -33,6 +39,14 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     cases = {str(item["case_id"]): item for item in manifest["cases"]}
     trials = list(manifest["trials"])
     case_pack = _verified_case_pack(manifest, resolved)
+    ground_truth_validation = _validate_revealed_ground_truth(
+        manifest, cases, case_pack
+    )
+    invalid_reasons = [
+        *temporal["violations"],
+        *ground_truth_validation["violations"],
+    ]
+    evaluation_valid = not invalid_reasons
     findings = [
         {**finding, "trial_id": trial["trial_id"], "case_id": trial["case_id"]}
         for trial in trials
@@ -127,7 +141,7 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
     high_precision = metrics["high_severity_precision"]
     release_evidence = _release_evidence(manifest.get("release_evidence", {}))
     precision_thresholds_met = (
-        temporal["valid"]
+        evaluation_valid
         and precision is not None
         and precision >= 0.80
         and high_precision is not None
@@ -140,6 +154,8 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         high_reports,
         temporal,
         case_pack,
+        ground_truth_validation,
+        evaluation_valid,
     )
     closed_beta = precision_thresholds_met and suite_qualification["qualified"]
     research_prototype = all(
@@ -215,12 +231,12 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "adapter_conformance": adapter_conformance,
         },
     }
-    if not temporal["valid"]:
+    if not evaluation_valid:
         for gate in release_gates.values():
             gate["passed"] = False
     warnings: list[str] = []
-    if not temporal["valid"]:
-        warnings.extend(temporal["violations"])
+    if not evaluation_valid:
+        warnings.extend(invalid_reasons)
         warnings.insert(
             0,
             "benchmark report is invalid; metrics and Magma results were suppressed",
@@ -229,19 +245,20 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
         warnings.append("ground-truth recall is undefined because no eligible vulnerabilities were supplied")
     if not high_reports:
         warnings.append("high-severity precision is undefined because no high/critical reports were emitted")
-    if temporal["valid"] and precision_thresholds_met and not suite_qualification["qualified"]:
+    if evaluation_valid and precision_thresholds_met and not suite_qualification["qualified"]:
         warnings.append(
             "closed-beta precision thresholds were met, but the benchmark suite is not operationally qualified"
         )
     report = {
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "created_at": utc_now(),
         "benchmark_id": manifest["benchmark_id"],
         "manifest_sha256": sha256_file(resolved),
         "track": manifest["track"],
-        "valid": temporal["valid"],
+        "valid": evaluation_valid,
         "temporal_validation": temporal,
-        "invalid_reasons": list(temporal["violations"]),
+        "ground_truth_validation": ground_truth_validation,
+        "invalid_reasons": invalid_reasons,
         "counts": {
             "cases": len(cases),
             "trials": len(trials),
@@ -250,8 +267,8 @@ def evaluate_benchmark(manifest_path: Path) -> dict[str, Any]:
             "true_reports": len(true_reports),
             "confirmed_true_reports": len(confirmed),
         },
-        "metrics": metrics if temporal["valid"] else None,
-        "magma": magma if temporal["valid"] else None,
+        "metrics": metrics if evaluation_valid else None,
+        "magma": magma if evaluation_valid else None,
         "suite_qualification": suite_qualification,
         "release_gates": release_gates,
         "warnings": warnings,
@@ -292,6 +309,8 @@ def _validate_manifest_shapes(manifest: dict[str, Any]) -> None:
         case_ids.add(case_id)
         if not isinstance(case["ground_truth"], list):
             raise ValueError("benchmark ground_truth must be an array")
+        if not isinstance(case["eligible"], bool):
+            raise ValueError("benchmark case eligible must be boolean")
         for vulnerability in case["ground_truth"]:
             if {"vulnerability_id", "severity"} - vulnerability.keys():
                 raise ValueError("ground-truth vulnerabilities require id and severity")
@@ -473,6 +492,83 @@ def _verified_case_pack(
     return report
 
 
+def _validate_revealed_ground_truth(
+    manifest: dict[str, Any],
+    cases: dict[str, dict[str, Any]],
+    case_pack: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if case_pack is None:
+        return {
+            "case_pack_declared": False,
+            "algorithm": GROUND_TRUTH_COMMITMENT_ALGORITHM,
+            "valid": None,
+            "metadata_matches": False,
+            "committed_case_count": 0,
+            "matched_case_count": 0,
+            "mismatched_case_ids": [],
+            "missing_manifest_case_ids": [],
+            "unexpected_manifest_case_ids": [],
+            "violations": [],
+        }
+
+    pack_cases = {str(item["case_id"]): item for item in case_pack["cases"]}
+    manifest_case_ids = set(cases)
+    pack_case_ids = set(pack_cases)
+    missing_manifest = sorted(pack_case_ids - manifest_case_ids)
+    unexpected_manifest = sorted(manifest_case_ids - pack_case_ids)
+    violations: list[str] = []
+    if case_pack["cutoff"] != manifest["cutoff"]:
+        violations.append("benchmark case-pack cutoff does not match the manifest")
+    for case_id in missing_manifest:
+        violations.append(f"benchmark manifest omits committed case: {case_id}")
+    for case_id in unexpected_manifest:
+        violations.append(f"benchmark manifest adds uncommitted case: {case_id}")
+
+    origin_mismatches: list[str] = []
+    commitment_mismatches: list[str] = []
+    matched = 0
+    for case_id in sorted(pack_case_ids & manifest_case_ids):
+        case = cases[case_id]
+        committed = pack_cases[case_id]
+        if committed["originated_at"] != case["originated_at"]:
+            origin_mismatches.append(case_id)
+            violations.append(
+                f"case {case_id} origin timestamp does not match the pre-trial case pack"
+            )
+        revealed = canonical_ground_truth_document(
+            case_id,
+            case["eligible"],
+            list(case["ground_truth"]),
+        )
+        observed_commitment = ground_truth_commitment_sha256(revealed)
+        if observed_commitment != committed["public_commitment_sha256"]:
+            commitment_mismatches.append(case_id)
+            violations.append(
+                f"case {case_id} revealed ground truth does not match its pre-trial commitment"
+            )
+        else:
+            matched += 1
+
+    metadata_matches = bool(
+        case_pack["cutoff"] == manifest["cutoff"]
+        and not missing_manifest
+        and not unexpected_manifest
+        and not origin_mismatches
+    )
+    return {
+        "case_pack_declared": True,
+        "algorithm": GROUND_TRUTH_COMMITMENT_ALGORITHM,
+        "valid": not violations,
+        "metadata_matches": metadata_matches,
+        "committed_case_count": len(pack_cases),
+        "matched_case_count": matched,
+        "mismatched_case_ids": commitment_mismatches,
+        "missing_manifest_case_ids": missing_manifest,
+        "unexpected_manifest_case_ids": unexpected_manifest,
+        "violations": violations,
+    }
+
+
 def _suite_qualification(
     manifest: dict[str, Any],
     cases: dict[str, dict[str, Any]],
@@ -480,6 +576,8 @@ def _suite_qualification(
     high_reports: list[dict[str, Any]],
     temporal: dict[str, Any],
     case_pack: dict[str, Any] | None,
+    ground_truth_validation: dict[str, Any],
+    evaluation_valid: bool,
 ) -> dict[str, Any]:
     eligible = {
         case_id: case for case_id, case in cases.items() if case["eligible"] is True
@@ -510,25 +608,12 @@ def _suite_qualification(
     )
     fully_accounted_trials = sum(_trial_costs_complete(trial) for trial in trials)
 
-    manifest_case_ids = set(cases)
-    pack_case_ids = set(case_pack["case_ids"]) if case_pack is not None else set()
-    pack_origins = (
-        {str(item["case_id"]): item["originated_at"] for item in case_pack["cases"]}
-        if case_pack is not None
-        else {}
-    )
-    pack_matches_manifest = bool(
-        case_pack is not None
-        and case_pack["cutoff"] == manifest["cutoff"]
-        and pack_case_ids == manifest_case_ids
-        and all(
-            pack_origins.get(case_id) == case["originated_at"]
-            for case_id, case in cases.items()
-        )
-    )
+    pack_matches_manifest = ground_truth_validation["metadata_matches"] is True
 
     checks = {
-        "valid_blind_temporal_suite": temporal["valid"] and manifest["blind"] is True,
+        "valid_blind_temporal_suite": evaluation_valid
+        and temporal["valid"]
+        and manifest["blind"] is True,
         "minimum_vulnerable_cases": len(vulnerable_cases) >= MINIMUM_VULNERABLE_CASES,
         "minimum_benign_controls": len(benign_controls) >= MINIMUM_BENIGN_CONTROLS,
         "minimum_distinct_seeds_per_case": bool(eligible)
@@ -539,6 +624,8 @@ def _suite_qualification(
             and case_pack["independent"] is True
             and pack_matches_manifest
         ),
+        "committed_ground_truth_matches_reveal": ground_truth_validation["valid"]
+        is True,
         "actionable_high_critical_evidence": actionable_high_reports
         == len(high_reports),
         "complete_trial_cost_accounting": fully_accounted_trials == len(trials),
@@ -561,6 +648,10 @@ def _suite_qualification(
             "requires a hash-verified independently authored encrypted case pack "
             "whose cutoff, case ids, and origin timestamps match the manifest"
         ),
+        "committed_ground_truth_matches_reveal": (
+            "requires every revealed eligibility flag, vulnerable/benign class, label, "
+            "and ground-truth record to match its pre-trial commitment"
+        ),
         "actionable_high_critical_evidence": (
             "requires executable-or-stronger evidence for every High/Critical report"
         ),
@@ -578,6 +669,7 @@ def _suite_qualification(
             "minimum_eligible_benign_controls": MINIMUM_BENIGN_CONTROLS,
             "minimum_distinct_seeds_per_eligible_case": MINIMUM_DISTINCT_SEEDS_PER_CASE,
             "independently_authored_encrypted_case_pack": True,
+            "committed_ground_truth_reveal": True,
             "high_critical_minimum_evidence": EvidenceLevel.EXECUTABLE.value,
             "complete_trial_cost_accounting": True,
         },
@@ -592,6 +684,12 @@ def _suite_qualification(
             "case_pack_declared": manifest.get("case_pack") is not None,
             "case_pack_verified": case_pack is not None,
             "case_pack_matches_manifest": pack_matches_manifest,
+            "committed_ground_truth_cases": ground_truth_validation[
+                "committed_case_count"
+            ],
+            "matched_ground_truth_commitments": ground_truth_validation[
+                "matched_case_count"
+            ],
         },
         "checks": checks,
         "reasons": reasons,

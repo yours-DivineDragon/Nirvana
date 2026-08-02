@@ -8,7 +8,11 @@ from pathlib import Path
 
 from .adjudication import AdjudicationBoard
 from .baseline import run_baseline
-from .benchmark_pack import write_case_pack_report
+from .benchmark_pack import (
+    benchmark_target_snapshot,
+    write_case_pack_report,
+    write_ground_truth_commitment,
+)
 from .board import HypothesisBoard
 from .coverage import CoverageBoard
 from .differential import DifferentialManifest, compare, minimize_mismatch
@@ -26,7 +30,7 @@ from .ledger import EvidenceLedger
 from .learning import review_detector_candidate
 from .models import MismatchClass
 from .policy import CommandRunner, ExecutionMode, ExecutionPolicy
-from .util import atomic_write_json
+from .util import atomic_write_json, sha256_file
 from .verification import snapshot_harness
 from .variants import mine_historical_variants
 from .workflow import audit
@@ -37,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.4")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.5")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -213,6 +217,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help="report path; defaults to benchmark-case-pack-report.json beside the pack",
+    )
+    benchmark_hash_target = benchmark_commands.add_parser(
+        "hash-target", help="compute the canonical benchmark target snapshot"
+    )
+    benchmark_hash_target.add_argument("target", type=Path)
+    benchmark_hash_target.add_argument(
+        "--json", action="store_true", help="print the complete snapshot record"
+    )
+    benchmark_commit_ground_truth = benchmark_commands.add_parser(
+        "commit-ground-truth",
+        help="create a public commitment from a canonical ground-truth reveal",
+    )
+    benchmark_commit_ground_truth.add_argument("ground_truth", type=Path)
+    benchmark_commit_ground_truth.add_argument(
+        "--output",
+        type=Path,
+        help="commitment path; defaults to <ground-truth>.commitment.json",
     )
 
     deployment = commands.add_parser("deployment", help="verify local source/build bytecode against captured deployed bytecode")
@@ -418,6 +439,31 @@ def main(argv: list[str] | None = None) -> int:
             print("private packet created; no disclosure was sent")
             return 0
         if args.command == "benchmark":
+            if args.benchmark_command == "hash-target":
+                snapshot = benchmark_target_snapshot(args.target)
+                if args.json:
+                    print(json.dumps(snapshot, sort_keys=True))
+                else:
+                    print(snapshot["target_snapshot_sha256"])
+                return 0
+            if args.benchmark_command == "commit-ground-truth":
+                output = (
+                    args.output.resolve()
+                    if args.output is not None
+                    else args.ground_truth.resolve(strict=True).with_suffix(
+                        ".commitment.json"
+                    )
+                )
+                commitment = write_ground_truth_commitment(
+                    args.ground_truth, output
+                )
+                print(output)
+                print(
+                    "public commitment: "
+                    f"{commitment['public_commitment_sha256']}"
+                )
+                print(f"commitment artifact: {sha256_file(output)}")
+                return 0
             if args.benchmark_command == "verify-pack":
                 output = (
                     args.output.resolve()
@@ -440,8 +486,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             report = write_benchmark_report(args.manifest, output)
             if not report["valid"]:
-                print("INVALID benchmark: temporal validation failed; metrics suppressed")
-                for violation in report["temporal_validation"]["violations"]:
+                print("INVALID benchmark: validation failed; metrics suppressed")
+                for violation in report["invalid_reasons"]:
                     print(f"violation: {violation}")
                 print(f"report: {output}")
                 return 2

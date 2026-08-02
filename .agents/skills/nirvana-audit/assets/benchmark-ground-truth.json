@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "CASE-REPLACE-ME",
+  "eligible": true,
+  "classification": "vulnerable",
+  "ground_truth": [
+    {
+      "vulnerability_id": "VULN-REPLACE-ME",
+      "severity": "high"
+    }
+  ]
+}

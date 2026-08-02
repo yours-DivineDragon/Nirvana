@@ -6,7 +6,7 @@ Nirvana is a local, evidence-gated security research system for authorized bug-b
 
 ## Current status
 
-Version `0.4.4` implements the complete orchestration skeleton described by the two founding PDFs:
+Version `0.4.5` implements the complete orchestration skeleton described by the two founding PDFs:
 
 - hostile-repository intake with commit, dependency, submodule, artifact, toolchain, privilege, upgrade, external-dependency, and snapshot provenance;
 - opt-in, digest-pinned Docker build/test baselines with hash-bound generated ABI, IDL, bytecode, and build artifacts;
@@ -178,6 +178,9 @@ nirvana disclose prepare differential-report.json triage.json minimized.json \
 Benchmark manifests pin a cutoff, corpora, last-vulnerable commits, hidden-variant transformation hashes, ground truth, prompts, models, tools, budgets, transcripts, environments, and repeated trials:
 
 ```bash
+nirvana benchmark hash-target cases/CASE-1/target
+nirvana benchmark commit-ground-truth cases/CASE-1/ground-truth.json \
+  --output cases/CASE-1/commitment.json
 nirvana benchmark verify-pack benchmark-case-pack.json \
   --output benchmark-case-pack-report.json
 nirvana benchmark evaluate benchmark-manifest.json --output benchmark-report.json
@@ -185,7 +188,7 @@ nirvana benchmark evaluate benchmark-manifest.json --output benchmark-report.jso
 
 The report computes validated precision, ground-truth recall, high/critical precision, novel validated yield, time to first valid finding, evidence distribution, reproduction rate, coverage completeness, duplicate rate, calibration, patch correctness, cost efficiency, stability, and reached/triggered/detected counts. It evaluates the PDF's research-prototype, Web3-alpha, closed-beta, production-candidate, and universal-expansion gates against explicit `release_evidence`. Every non-statistical release gate also needs a retained, hash-verified evidence artifact for that gate; booleans alone cannot mint a maturity claim.
 
-Closed beta separates the PDF's 80% overall and 90% High/Critical precision targets from `nirvana-closed-beta-v1` suite qualification. A passing suite also needs at least 20 eligible vulnerable cases, 10 eligible benign controls, three distinct seeds per eligible case, a verified independently authored encrypted case pack, executable-or-stronger evidence for every High/Critical report, and complete trial cost accounting. A clean smaller pilot remains valid and keeps its metrics, but cannot claim closed beta. A contaminated manifest produces `valid: false`, records every violation in `invalid_reasons`, writes `metrics: null` and `magma: null`, forces every release gate closed, prints the violations, and exits `2`. Without `--output`, the report is written beside the manifest rather than into the caller's current directory. Undefined metrics in a valid report stay undefined rather than being reported as zero. See [blind benchmark operations](docs/benchmarking.md) for case-pack custody, trial recording, and the pinned executable harness.
+Closed beta separates the PDF's 80% overall and 90% High/Critical precision targets from `nirvana-closed-beta-v1` suite qualification. A passing suite also needs at least 20 eligible vulnerable cases, 10 eligible benign controls, three distinct seeds per eligible case, a verified independently authored encrypted case pack, a post-trial reveal matching every pre-trial eligibility/class/label commitment, executable-or-stronger evidence for every High/Critical report, and complete trial cost accounting. A clean smaller pilot remains valid and keeps its metrics, but cannot claim closed beta. A contaminated manifest or commitment mismatch produces `valid: false`, records every violation in `invalid_reasons`, writes `metrics: null` and `magma: null`, forces every release gate closed, prints the violations, and exits `2`. Without `--output`, the report is written beside the manifest rather than into the caller's current directory. Undefined metrics in a valid report stay undefined rather than being reported as zero. See [blind benchmark operations](docs/benchmarking.md) for case-pack custody, trial recording, and the pinned executable harness.
 
 Every confirmed finding creates a candidate learning bundle. Promotion requires positive and benign-negative regressions, cross-project generalization, a performance/noise budget, human review, and provenance/license review:
 

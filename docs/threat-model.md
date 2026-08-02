@@ -25,7 +25,7 @@ Nirvana assumes the audit target is controlled by an adversary attempting to inf
 | Recall collapse | Rescue Critic and preserved rejection reasons |
 | Fabricated novelty | Post-confirmation causal comparison against a hashed provenance-bearing corpus |
 | Unsafe detector self-modification | Six explicit promotion gates; review records never rewrite production detector source |
-| Benchmark contamination or one-case overclaim | Cutoff checks across training/retrieval/rules, blocked ground truth and eventual fixes, independent encrypted case-pack hashes, hidden-variant transformation hashes, repeat seeds, benign controls, and archived trial provenance |
+| Benchmark contamination, post-trial relabelling, or one-case overclaim | Cutoff checks across training/retrieval/rules, blocked ground truth and eventual fixes, independent encrypted case-pack hashes, canonical eligibility/class/label commitments, hidden-variant transformation hashes, repeat seeds, benign controls, and archived trial provenance |
 | Fabricated deployed-code identity | Offline bytecode comparison bound to compiler config and capture provenance; no chain lookup performed |
 | Unsafe disclosure | Human-controlled coordinated-disclosure workflow |
 

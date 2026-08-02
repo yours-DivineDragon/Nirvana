@@ -1,8 +1,10 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "pack_id": "REPLACE-WITH-INDEPENDENT-PACK-ID",
   "cutoff": "2025-01-01T00:00:00Z",
   "created_at": "2025-02-01T00:00:00Z",
+  "target_snapshot_algorithm": "nirvana-regular-file-tree-v1",
+  "ground_truth_commitment_algorithm": "sha256-canonical-ground-truth-v1",
   "author_attestation": {
     "author_id": "REPLACE-WITH-INDEPENDENT-AUTHOR",
     "independent_from_trial_operator": true,
@@ -27,9 +29,10 @@
       "target_path": "cases/CASE-REPLACE-ME/target",
       "target_snapshot_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "public_commitment_path": "cases/CASE-REPLACE-ME/commitment.json",
-      "public_commitment_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "public_commitment_artifact_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "public_commitment_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       "sealed_ground_truth_path": "cases/CASE-REPLACE-ME/ground-truth.age",
-      "sealed_ground_truth_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      "sealed_ground_truth_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   ]
 }
