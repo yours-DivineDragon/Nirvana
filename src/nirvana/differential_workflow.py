@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import validate_contract
-from .differential import validate_differential_report_consistency
+from .differential import DifferentialReport, validate_differential_report_consistency
 from .ledger import EvidenceLedger
 from .models import CodeLocation, EvidenceLevel, EvidenceRecord, Hypothesis, MismatchClass
 from .util import atomic_write_json, canonical_json, sha256_bytes, sha256_file, utc_now
@@ -26,21 +26,36 @@ def load_differential_report(path: Path) -> dict[str, Any]:
     return value
 
 
-def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
+def attach_comparison_result(
+    run_directory: Path,
+    report: DifferentialReport,
+    report_path: Path,
+) -> list[Hypothesis]:
     run_root = run_directory.resolve(strict=True)
     ledger = EvidenceLedger(run_root / "evidence.jsonl")
     records = ledger.records()
     ledger.verify()
-    report = load_differential_report(report_path)
-    _require_valid_report(report)
+    report_value = report.to_dict()
+    _require_valid_report(report_value)
     source = report_path.resolve(strict=True)
-    digest = sha256_file(source)
+    if source.stat().st_size > MAX_DIFFERENTIAL_ARTIFACT_BYTES:
+        raise ValueError("differential report exceeds the 256 MB attachment limit")
+    expected_source = (
+        json.dumps(report_value, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    digest = sha256_bytes(expected_source)
+    if sha256_file(source) != digest:
+        raise ValueError(
+            "differential comparison output changed before its in-process attachment"
+        )
     existing_attachment = next(
         (
             record["payload"]
             for record in records
             if record["payload"].get("event") == "differential_report_attached"
             and record["payload"].get("source_sha256") == digest
+            and record["payload"].get("attachment_source")
+            == "in_process_spec_compare"
         ),
         None,
     )
@@ -51,22 +66,25 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
         attached_digest = str(existing_attachment["artifact_sha256"])
         if sha256_file(attached_path) != attached_digest:
             raise ValueError("previously attached differential report no longer matches the ledger")
-        return _attached_hypotheses(records, report, attached_digest)
+        return _attached_hypotheses(records, report_value, attached_digest)
     attached_path = run_root / "differential" / f"report-{digest[:16]}.json"
-    atomic_write_json(attached_path, report)
+    atomic_write_json(attached_path, report_value)
     attached_digest = sha256_file(attached_path)
+    if attached_digest != digest:
+        raise ValueError("attached differential report differs from the comparison result")
     hypotheses: list[Hypothesis] = []
     payloads: list[dict[str, Any]] = [
         {
             "event": "differential_report_attached",
+            "attachment_source": "in_process_spec_compare",
             "artifact_path": str(attached_path),
             "artifact_sha256": attached_digest,
             "source_path": str(source),
             "source_sha256": digest,
-            "spec_sha256": report["spec_sha256"],
-            "manifest_sha256": report["manifest_sha256"],
-            "case_count": report["case_count"],
-            "mismatch_count": len(report["mismatches"]),
+            "spec_sha256": report_value["spec_sha256"],
+            "manifest_sha256": report_value["manifest_sha256"],
+            "case_count": report_value["case_count"],
+            "mismatch_count": len(report_value["mismatches"]),
             "valid": True,
         }
     ]
@@ -75,7 +93,7 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
         for record in records
         if record["payload"].get("event") == "hypothesis_proposed"
     }
-    for mismatch in report["mismatches"]:
+    for mismatch in report_value["mismatches"]:
         identity = _differential_identity(attached_digest, mismatch)
         hypothesis_id = f"H-DIFF-{identity[:16]}"
         if hypothesis_id in existing_ids:
@@ -107,7 +125,7 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
             threat_lens="differential-consistency",
             generator="differential-analysis",
             graph_slice=[
-                f"spec:{report['spec_sha256']}",
+                f"spec:{report_value['spec_sha256']}",
                 f"case:{mismatch['case_id']}",
                 *[f"implementation:{item['implementation']}" for item in mismatch["outcomes"]],
             ],
@@ -131,8 +149,8 @@ def attach_report(run_directory: Path, report_path: Path) -> list[Hypothesis]:
                 "case_id": mismatch["case_id"],
                 "input_sha256": mismatch["input_sha256"],
                 "classification": mismatch["classification"],
-                "spec_sha256": report["spec_sha256"],
-                "manifest_sha256": report["manifest_sha256"],
+                "spec_sha256": report_value["spec_sha256"],
+                "manifest_sha256": report_value["manifest_sha256"],
                 "not_proof": True,
             },
         )

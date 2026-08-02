@@ -18,7 +18,7 @@ from .board import HypothesisBoard
 from .coverage import CoverageBoard
 from .differential import DifferentialManifest, compare, minimize_mismatch
 from .differential_workflow import (
-    attach_report,
+    attach_comparison_result,
     classify_mismatch,
     prepare_disclosure_packet,
     write_feedback_package,
@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nirvana",
         description="Local, evidence-gated security research orchestration",
     )
-    parser.add_argument("--version", action="version", version="nirvana 0.4.12")
+    parser.add_argument("--version", action="version", version="nirvana 0.4.13")
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor", help="inspect local deterministic and verifier tooling")
@@ -166,9 +166,6 @@ def build_parser() -> argparse.ArgumentParser:
     spec_compare.add_argument(
         "--run-directory", type=Path, help="attach mismatches to an audit run as localised hypotheses"
     )
-    spec_attach = spec_commands.add_parser("attach", help="attach an existing report to a run")
-    spec_attach.add_argument("run_directory", type=Path)
-    spec_attach.add_argument("report", type=Path)
     spec_classify = spec_commands.add_parser("classify", help="durably classify one mismatch")
     spec_classify.add_argument("report", type=Path)
     spec_classify.add_argument("case_id")
@@ -372,10 +369,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"checkpoint valid through record {sequence}")
             return 0
         if args.command == "spec":
-            if args.spec_command == "attach":
-                hypotheses = attach_report(args.run_directory, args.report)
-                print(f"attached hypotheses: {len(hypotheses)}")
-                return 0
             if args.spec_command == "classify":
                 triage = classify_mismatch(
                     args.report,
@@ -428,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"report: {args.output.resolve()}")
                 return 2
             if args.run_directory is not None:
-                attach_report(args.run_directory, args.output)
+                attach_comparison_result(args.run_directory, report, args.output)
             print(args.output.resolve())
             print(
                 f"cases: {report.case_count}; comparable cases: {report.comparable_case_count}; "

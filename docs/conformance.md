@@ -39,7 +39,7 @@ This map records how version 0.4 implements the two founding PDFs and, equally i
 | Minimize every seed | Deterministic JSON delta reduction reruns all implementations and refuses flaky cases | `differential-minimization.json` |
 | Feed back into prose/tests | Review-only spec amendment and regression corpus case | `differential-feedback.json` |
 | Preserve transcripts/provenance | Bounded raw prefixes, full hashes, normalized outputs, commands, source/model provenance | report and attached ledger artifact |
-| Feed audit pipeline | Each mismatch becomes a localised hypothesis/evidence record in an existing run | `differential_report_attached`, `H-DIFF-*` |
+| Feed audit pipeline | Only the in-process result of `spec compare --run-directory` may enter a run; the written report hash must still match the runner-produced object, and detached JSON cannot originate hypotheses | `differential_report_attached.attachment_source=in_process_spec_compare`, `H-DIFF-*` |
 | Least privilege | argv-only execution, pinned non-root Docker, read-only source, no network/secrets, target instructions as data | policy fingerprint and runner receipt |
 | Coordinated disclosure | Private packet includes spec revision, minimized seed, normalized outputs, classification/impact, agent configuration, prompt-injection assessment, and recommended order | `private-disclosure-packet.json`; automatic delivery is false |
 
