@@ -5,10 +5,10 @@ Nirvana separates a valid measurement from a maturity claim. A small or explorat
 `benchmark-report.json` exposes the distinction directly:
 
 - `release_gates.closed_beta.precision_thresholds_met` applies the founding specification's 80% overall and 90% High/Critical precision targets.
-- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v5` operational floors.
+- `suite_qualification.qualified` applies Nirvana's conservative `nirvana-closed-beta-v6` operational floors.
 - `release_gates.closed_beta.passed` is true only when both are true.
 
-The v5 operational floors are project policy, not a claim that a particular sample size proves general performance:
+The v6 operational floors are project policy, not a claim that a particular sample size proves general performance:
 
 | Qualification check | Floor |
 |---|---:|
@@ -20,6 +20,7 @@ The v5 operational floors are project policy, not a claim that a particular samp
 | Case metadata | Disclosure time, hidden-variant status, and transformation-log hash match the independently authored case pack |
 | Finding attribution | Every true positive names committed ground truth; every non-null id belongs to that case |
 | Run provenance | Every trial and complete finding set matches a sealed ledger checkpoint; confirmed findings cannot be suppressed |
+| Audited target | Every ledger-sealed run snapshot exactly matches its independently committed case-pack target |
 | Derived outcomes | Reproduction, patch-test, novelty/duplicate, time-to-finding, and six-dimension coverage state match the checkpointed run |
 | Magma levels | Detection is derived, trigger declarations include ledger-demonstrated triggers, and `detected ⊆ triggered ⊆ reached` |
 | Novelty adjudication | Every checkpointed finding has a corpus-bound `novelty_assessed` event before sealing |
@@ -46,9 +47,9 @@ nirvana benchmark commit-ground-truth cases/CASE-1/ground-truth.json \
   --output cases/CASE-1/commitment.json
 ```
 
-`hash-target` uses the declared `nirvana-regular-file-tree-v1` algorithm: sorted relative regular-file paths, byte sizes, and SHA-256 values encoded as canonical JSON. `commit-ground-truth` uses `sha256-canonical-ground-truth-v1` and emits no labels—only the case id, algorithm, and commitment. Its output prints both values needed by the pack: `public_commitment_sha256` for the canonical reveal and `public_commitment_artifact_sha256` for the commitment file bytes. Remove the plaintext reveal from trial-operator access after encrypting it; retain it with the reveal custodian.
+`hash-target` uses the declared `nirvana-intake-scope-v1` algorithm, the same identity emitted in a run's `scope.json`: the safe Git commit identity plus the canonical intake inventory after Nirvana's fixed generated-output and VCS exclusions. Paths, sizes, content hashes, file kinds, and untrusted-guidance markers are encoded as canonical JSON. Benchmark trials therefore use the normal default intake policy; adding extra intake exclusions intentionally changes the scoped target and will fail the pack-to-run equality check. `commit-ground-truth` uses `sha256-canonical-ground-truth-v1` and emits no labels—only the case id, algorithm, and commitment. Its output prints both values needed by the pack: `public_commitment_sha256` for the canonical reveal and `public_commitment_artifact_sha256` for the commitment file bytes. Remove the plaintext reveal from trial-operator access after encrypting it; retain it with the reveal custodian.
 
-Case-pack schema v1.3 requires a non-negative KLOC commitment plus disclosure time, hidden-variant status, and a nullable transformation-log hash for every target. A hidden variant must have a transformation-log hash. The schema remains intentionally incompatible with v1.0 packs, whose public commitment was only an artifact byte hash; recreate those commitments from the canonical reveal before using them for evaluation.
+Case-pack schema v1.4 requires the canonical intake target algorithm, a non-negative KLOC commitment, disclosure time, hidden-variant status, and a nullable transformation-log hash for every target. A hidden variant must have a transformation-log hash. Packs using the former regular-file-tree target digest must be rehashed with `nirvana benchmark hash-target`; older public commitments must likewise be recreated from the canonical reveal before evaluation.
 
 Start from `.agents/skills/nirvana-audit/assets/benchmark-case-pack.json`, then verify the completed pack:
 
@@ -98,7 +99,7 @@ nirvana benchmark seal-trial ./nirvana-runs/<run-id> \
   --output ./nirvana-runs/<run-id>/benchmark-trial-checkpoint.json
 ```
 
-The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.2 records each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction and verified patched-control state, latest novelty classification and corpus hash, exact-duplicate/novel booleans, and elapsed ledger time from `scope_captured` to `finding_confirmed`. It also reconstructs all six coverage dimensions from the hash-bound `coverage-initial.json` plus checkpointed `coverage_updated` events and seals the canonical final projection. It refuses missing coverage provenance or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256, derived coverage digest and values, and relative paths into manifest v1.4:
+The command derives the complete `finding_confirmed` set from the ledger. Trial seal v1.3 records the ledger-backed target snapshot algorithm and digest plus each finding's severity, evidence tier, reproducer and regression evidence ids, replay-derived reproduction and verified patched-control state, latest novelty classification and corpus hash, exact-duplicate/novel booleans, and elapsed ledger time from `scope_captured` to `finding_confirmed`. It also reconstructs all six coverage dimensions from the hash-bound `coverage-initial.json` plus checkpointed `coverage_updated` events and seals the canonical final projection. It refuses an incomplete target snapshot, missing coverage provenance, or currently failed replay evidence, then checkpoints that seal. Put the printed artifact SHA-256, derived coverage digest and values, and relative paths into manifest v1.4:
 
 ```json
 {
@@ -120,11 +121,11 @@ The command derives the complete `finding_confirmed` set from the ledger. Trial 
 }
 ```
 
-Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, invented findings, omitted checkpointed findings, severity or evidence-tier drift, operator-declared reproduction, patch, novelty, duplicate, timing, or coverage state that differs from the ledger, unverified supporting evidence, and evidence invalidated by a later replay failure. It computes coverage completeness over all six runtime dimensions; a four-field subset cannot raise the mean. This is a one-to-one binding: every checkpointed finding must be adjudicated `true_positive` or `false_positive`; `suppressed` cannot remove it from the precision denominator. Unconfirmed analyst-queue items stay outside the benchmark finding set.
+Evaluation rejects path traversal, symlinks, checkpoint or ledger tampering, a free `run_id` that differs from the run-directory name, a trial/case/seed identity that differs from the seal, a run target whose canonical intake digest differs from the independently committed case target, invented findings, omitted checkpointed findings, severity or evidence-tier drift, operator-declared reproduction, patch, novelty, duplicate, timing, or coverage state that differs from the ledger, unverified supporting evidence, and evidence invalidated by a later replay failure. A target mismatch violation prints both algorithms and both digests; it invalidates the report and suppresses every metric. Evaluation computes coverage completeness over all six runtime dimensions; a four-field subset cannot raise the mean. This is a one-to-one binding: every checkpointed finding must be adjudicated `true_positive` or `false_positive`; `suppressed` cannot remove it from the precision denominator. Unconfirmed analyst-queue items stay outside the benchmark finding set.
 
 Magma accounting is validated per trial. `detected_ids` must exactly equal the committed ground-truth ids attributed to ledger-bound `true_positive` findings. Replay-verified executable-or-stronger evidence establishes a minimum trigger set even when the eventual adjudication is false positive. Declared triggering must include that lower bound, and every trial must satisfy `detected ⊆ triggered ⊆ reached`. The report labels detection as `derived_from_ledger_bound_true_positives`, triggering as `declared_with_ledger_lower_bound`, and reach as `declared`; Nirvana does not overstate reach as a ledger-derived fact.
 
-Run novelty assessment before sealing when the result will support a maturity claim. `novel` is derived only from `novel_mechanism`, while `duplicate` is derived only from `exact_duplicate`. A finding with no checkpointed `novelty_assessed` event is sealed with both values as `null`: the pilot remains valid, but novel validated yield and duplicate rate stay undefined as applicable, and closed-beta v5 qualification fails. Manifest v1.4 and trial seal v1.2 are intentionally incompatible with older unbound claims.
+Run novelty assessment before sealing when the result will support a maturity claim. `novel` is derived only from `novel_mechanism`, while `duplicate` is derived only from `exact_duplicate`. A finding with no checkpointed `novelty_assessed` event is sealed with both values as `null`: the pilot remains valid, but novel validated yield and duplicate rate stay undefined as applicable, and closed-beta v6 qualification fails. Manifest v1.4, case-pack v1.4, and trial seal v1.3 are intentionally incompatible with older unbound benchmark claims.
 
 The checkpoint remains a tamper-evident local commitment until its hash is published to an independent trusted store. Nirvana reports whether the checkpoint contains an `external_anchor`, but does not claim to verify the honesty, independence, or publication time of that outside service.
 

@@ -68,6 +68,8 @@ def seal_benchmark_trial(
         raise ValueError("run scope manifest must be one JSON object")
     scope = ScopeManifest.from_dict(scope_value)
     validate_scope_against_ledger(scope, records)
+    if not scope.snapshot_complete:
+        raise ValueError("benchmark trial target snapshot is incomplete")
     findings, _, finding_states, violations = _checkpointed_findings(records, scope)
     coverage_state = _checkpointed_coverage(resolved_run, records)
     if violations:
@@ -92,6 +94,7 @@ def seal_benchmark_trial(
             findings,
             finding_states,
             coverage_state,
+            scope,
         )
         if seal_violations:
             raise ValueError(
@@ -102,7 +105,7 @@ def seal_benchmark_trial(
         seal_record_hash = existing_seals[0]["record_hash"]
     else:
         seal = {
-            "schema_version": "1.2.0",
+            "schema_version": "1.3.0",
             "event": "benchmark_trial_sealed",
             "trial_id": trial_id,
             "case_id": case_id,
@@ -113,6 +116,8 @@ def seal_benchmark_trial(
             "finding_set_sha256": sha256_bytes(
                 canonical_json(finding_claims).encode("utf-8")
             ),
+            "target_snapshot_algorithm": scope.target_snapshot_algorithm,
+            "target_snapshot_sha256": scope.target_snapshot_sha256,
             "coverage_sha256": coverage_state["coverage_sha256"],
             "coverage": coverage_state["coverage"],
         }
@@ -129,7 +134,9 @@ def seal_benchmark_trial(
 
 
 def validate_trial_ledger_bindings(
-    manifest_path: Path, trials: list[dict[str, Any]]
+    manifest_path: Path,
+    trials: list[dict[str, Any]],
+    case_target_snapshots: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Verify each trial against an immutable prefix of its Nirvana run ledger."""
 
@@ -141,9 +148,12 @@ def validate_trial_ledger_bindings(
     for trial in trials:
         trial_id = str(trial["trial_id"])
         run_id = str(trial["run_id"])
+        expected_target: dict[str, str] | None = None
         try:
+            if case_target_snapshots is not None:
+                expected_target = case_target_snapshots[str(trial["case_id"])]
             result, trial_violations = _validate_trial_binding(
-                manifest_path, trial
+                manifest_path, trial, expected_target
             )
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
             trial_violations = [
@@ -163,6 +173,19 @@ def validate_trial_ledger_bindings(
                 "derived_findings": [],
                 "coverage_sha256": None,
                 "derived_coverage": None,
+                "target_snapshot_algorithm": None,
+                "target_snapshot_sha256": None,
+                "expected_case_target_snapshot_algorithm": (
+                    expected_target.get("algorithm")
+                    if expected_target is not None
+                    else None
+                ),
+                "expected_case_target_snapshot_sha256": (
+                    expected_target.get("target_snapshot_sha256")
+                    if expected_target is not None
+                    else None
+                ),
+                "target_binding_valid": False if expected_target is not None else None,
                 "replay_verified_evidence_ids": [],
                 "post_checkpoint_invalidated_evidence_ids": [],
                 "violations": trial_violations,
@@ -186,6 +209,9 @@ def validate_trial_ledger_bindings(
             len(item["checkpointed_finding_ids"]) for item in results
         ),
         "matched_finding_count": verified_findings,
+        "target_bound_trial_count": sum(
+            item["target_binding_valid"] is True for item in results
+        ),
         "externally_anchored_trial_count": externally_anchored_trials,
         "trials": results,
         "violations": violations,
@@ -193,7 +219,9 @@ def validate_trial_ledger_bindings(
 
 
 def _validate_trial_binding(
-    manifest_path: Path, trial: dict[str, Any]
+    manifest_path: Path,
+    trial: dict[str, Any],
+    expected_target: dict[str, str] | None,
 ) -> tuple[dict[str, Any], list[str]]:
     trial_id = str(trial["trial_id"])
     run_id = str(trial["run_id"])
@@ -245,6 +273,8 @@ def _validate_trial_binding(
         raise ValueError("run scope manifest must be one JSON object")
     scope = ScopeManifest.from_dict(scope_value)
     validate_scope_against_ledger(scope, records)
+    if not scope.snapshot_complete:
+        raise ValueError("benchmark trial target snapshot is incomplete")
     findings, replay_verified, finding_states, semantic_violations = _checkpointed_findings(
         records, scope
     )
@@ -274,9 +304,24 @@ def _validate_trial_binding(
             f"{post_checkpoint_invalidated}"
         )
     seal_sequence, seal_violations = _validate_trial_seal(
-        records, trial, findings, finding_states, coverage_state
+        records, trial, findings, finding_states, coverage_state, scope
     )
     semantic_violations.extend(seal_violations)
+    target_binding_valid: bool | None = None
+    if expected_target is not None:
+        target_binding_valid = bool(
+            scope.target_snapshot_algorithm == expected_target["algorithm"]
+            and scope.target_snapshot_sha256
+            == expected_target["target_snapshot_sha256"]
+        )
+        if not target_binding_valid:
+            semantic_violations.append(
+                f"trial {trial_id} audited target snapshot "
+                f"{scope.target_snapshot_sha256} "
+                f"({scope.target_snapshot_algorithm}) does not match case-pack "
+                f"target snapshot {expected_target['target_snapshot_sha256']} "
+                f"({expected_target['algorithm']})"
+            )
     if trial["coverage_sha256"] != coverage_state["coverage_sha256"]:
         semantic_violations.append(
             f"trial {trial_id} coverage hash does not match its checkpointed run"
@@ -376,6 +421,17 @@ def _validate_trial_binding(
         "derived_findings": _finding_claims(findings, finding_states),
         "coverage_sha256": coverage_state["coverage_sha256"],
         "derived_coverage": coverage_state["coverage"],
+        "target_snapshot_algorithm": scope.target_snapshot_algorithm,
+        "target_snapshot_sha256": scope.target_snapshot_sha256,
+        "expected_case_target_snapshot_algorithm": (
+            expected_target["algorithm"] if expected_target is not None else None
+        ),
+        "expected_case_target_snapshot_sha256": (
+            expected_target["target_snapshot_sha256"]
+            if expected_target is not None
+            else None
+        ),
+        "target_binding_valid": target_binding_valid,
         "replay_verified_evidence_ids": sorted(replay_verified),
         "post_checkpoint_invalidated_evidence_ids": post_checkpoint_invalidated,
         "violations": semantic_violations,
@@ -389,6 +445,7 @@ def _validate_trial_seal(
     findings: dict[str, Finding],
     finding_states: dict[str, dict[str, Any]],
     coverage_state: dict[str, Any],
+    scope: ScopeManifest,
 ) -> tuple[int | None, list[str]]:
     trial_id = str(trial["trial_id"])
     matches = [
@@ -437,6 +494,16 @@ def _validate_trial_seal(
     if seal["finding_set_sha256"] != expected_digest:
         violations.append(
             f"trial {trial_id} trial-seal finding-set hash does not match the ledger"
+        )
+    if seal["target_snapshot_algorithm"] != scope.target_snapshot_algorithm:
+        violations.append(
+            f"trial {trial_id} trial-seal target snapshot algorithm does not match "
+            "the ledger-backed scope"
+        )
+    if seal["target_snapshot_sha256"] != scope.target_snapshot_sha256:
+        violations.append(
+            f"trial {trial_id} trial-seal target snapshot does not match the "
+            "ledger-backed scope"
         )
     if seal["coverage_sha256"] != coverage_state["coverage_sha256"]:
         violations.append(

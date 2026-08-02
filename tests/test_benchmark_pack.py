@@ -14,6 +14,7 @@ from nirvana.benchmark_pack import (
     write_ground_truth_commitment,
 )
 from nirvana.cli import main
+from nirvana.intake import RepositoryIntake
 from nirvana.util import sha256_file
 
 
@@ -42,7 +43,7 @@ class BenchmarkCasePackTests(unittest.TestCase):
         sealed = target.parent / "ground-truth.age"
         sealed.write_text("age-encryption.org/v1\nfixture-ciphertext\n")
         pack = {
-            "schema_version": "1.3.0",
+            "schema_version": "1.4.0",
             "pack_id": "independent-pack-1",
             "cutoff": "2024-12-31T00:00:00Z",
             "created_at": "2025-01-20T00:00:00Z",
@@ -96,12 +97,39 @@ class BenchmarkCasePackTests(unittest.TestCase):
             path = self.write_pack(Path(directory))
             report = verify_case_pack(path)
             self.assertTrue(report["valid"])
-            self.assertEqual(report["schema_version"], "1.3.0")
+            self.assertEqual(report["schema_version"], "1.4.0")
             self.assertEqual(report["cases"][0]["kloc"], 1.0)
             self.assertTrue(report["cases"][0]["hidden_variant"])
             self.assertTrue(report["independent"])
             self.assertEqual(report["case_ids"], ["CASE-1"])
             self.assertEqual(report["case_pack_sha256"], sha256_file(path))
+
+    def test_hash_target_matches_the_intake_scope_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.mkdir()
+            (target / "Fixture.sol").write_text("contract Fixture {}\n")
+            snapshot = benchmark_target_snapshot(target)
+            scope = RepositoryIntake().inspect(target)
+            self.assertEqual(snapshot["schema_version"], "1.1.0")
+            self.assertEqual(snapshot["algorithm"], scope.target_snapshot_algorithm)
+            self.assertEqual(
+                snapshot["target_snapshot_sha256"],
+                scope.target_snapshot_sha256,
+            )
+
+    def test_hash_target_rejects_nested_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.mkdir()
+            outside = root / "outside.txt"
+            outside.write_text("not part of the target\n")
+            (target / "linked.txt").symlink_to(outside)
+
+            with self.assertRaisesRegex(ValueError, "must not contain symlinks"):
+                benchmark_target_snapshot(target)
 
     def test_case_pack_hash_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

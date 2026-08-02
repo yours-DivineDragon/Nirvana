@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nirvana.evm import SolcAstCandidateScanner, SolidityCandidateScanner
-from nirvana.intake import IntakePolicy, RepositoryIntake
+from nirvana.intake import (
+    TARGET_SNAPSHOT_ALGORITHM,
+    IntakePolicy,
+    RepositoryIntake,
+    ScopeManifest,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evm"
@@ -37,8 +42,22 @@ class IntakeAndEvmTests(unittest.TestCase):
 
             self.assertEqual(scope.repository_commit, commit)
             self.assertIsNone(scope.repository_dirty)
+            self.assertEqual(
+                scope.target_snapshot_algorithm,
+                TARGET_SNAPSHOT_ALGORITHM,
+            )
             self.assertRegex(scope.target_snapshot_sha256, r"^[a-f0-9]{64}$")
             self.assertTrue(any("never executes" in warning for warning in scope.warnings))
+
+    def test_scope_rejects_a_snapshot_not_derived_from_its_inventory(self) -> None:
+        scope = RepositoryIntake().inspect(FIXTURE).to_dict()
+        scope["target_snapshot_sha256"] = "0" * 64
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "does not match its captured file inventory",
+        ):
+            ScopeManifest.from_dict(scope)
 
     def test_subdirectory_does_not_inherit_enclosing_repository_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
