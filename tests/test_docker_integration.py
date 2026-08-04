@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+import base64
 from pathlib import Path
 
 from nirvana.board import HypothesisBoard
@@ -133,7 +134,26 @@ class RealDockerForgeIntegrationTests(unittest.TestCase):
             )
             board = HypothesisBoard(result.run_directory)
 
-            evidence = board.execute_evidence(request_path, runner)
+            try:
+                evidence = board.execute_evidence(request_path, runner)
+            except ValueError as error:
+                rejected = sorted(
+                    (result.run_directory / "evidence" / request["evidence_id"]).glob(
+                        "rejected-*.json"
+                    )
+                )
+                if not rejected:
+                    raise
+                receipt = load_receipt(rejected[-1])
+                stdout = base64.b64decode(
+                    receipt["result"]["stdout_base64"], validate=True
+                ).decode("utf-8", errors="replace")
+                stderr = base64.b64decode(
+                    receipt["result"]["stderr_base64"], validate=True
+                ).decode("utf-8", errors="replace")
+                self.fail(
+                    f"{error}\nDocker stdout:\n{stdout}\nDocker stderr:\n{stderr}"
+                )
             self.assertIs(evidence.level, EvidenceLevel.EXPLOIT_DEMONSTRATED)
             self.assertTrue(evidence.metadata["negative_control_verified"])
             receipt = load_receipt(Path(evidence.artifact_path or ""))
