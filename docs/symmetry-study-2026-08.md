@@ -10,7 +10,7 @@ The three measured causes were corrected in the same change:
 - calls proven `view` or `pure` by compiler types cannot create asset-effect facts, while unresolved and state-changing calls remain conservative;
 - known value-flow pairs suppress only directionally expected authority/oracle guards on the risk-bearing operation. Reverse-direction differences and pause, reentrancy, deadline, nonce, state, and effect differences remain candidates.
 
-Re-running the exact same ten AST artifacts after those changes emitted zero symmetry hypotheses. This is a regression result on the tuning sample, not an independent precision estimate and not a recall measurement.
+Re-running the exact same ten AST artifacts after those changes emitted zero symmetry hypotheses. A second, controlled mutation pass then reached and triggered one semantic asymmetry in every repository and detected seven of ten. The bounded claim is therefore: **zero false positives on the ten unmodified roots and 7/10 injected asymmetries detected on those same roots**. This remains a tuning-sample result, not an independent precision estimate or real-vulnerability recall measurement.
 
 ## Repositories and compiler provenance
 
@@ -28,6 +28,48 @@ Re-running the exact same ten AST artifacts after those changes emitted zero sym
 | Uniswap/v4-core | `46c6834698c48bc4a463a86d8420f4eb1d7f3b75` | `src/PoolManager.sol` | 0.8.26 | `d5f23436f443edb85d8e76906d12f0a86ce0490e7663a9e608efeb7a93f149ef` | 45 | `78f338ae3066ea30deed490528ff4c7c9a9ad12a8ffb66b6de6c4d5926199498` | 0 | 0 |
 
 Balancer's declared `@openzeppelin/contracts` dependency was resolved at 5.4.0. Git submodule dependencies were checked out at the gitlinks committed by each target. Dependency source units are included in the AST hashes and counts above.
+
+## Injected-asymmetry recall on the same ten ASTs
+
+Each mutation removes one real compiler-AST node selected by function id and source span. `Reached` means the selected fact was present in the chosen entry-point summary before mutation. `Triggered` means it disappeared after mutation. `Detected` means the exact selected pair emitted the expected `guard-parity` or `state-parity` hypothesis. This gives the same `detected ⊆ triggered ⊆ reached` accounting used by the benchmark machinery without presenting synthetic mutations as vulnerabilities.
+
+| Repository | Injected asymmetry | Reached | Triggered | Detected | Result or miss reason |
+|---|---|---:|---:|---:|---|
+| Morpho | Delete `_isSenderAuthorized(onBehalf)` from `withdraw` | yes | yes | **no** | `supply` and mutated `withdraw` both have no authority fact, so deleting the required-side guard removes rather than creates a parity difference. |
+| Aave | Delete the `!isPaused` validation reached by `repay` | yes | yes | **yes** | `guard-parity` reports the remaining one-sided pause guard on `borrow`. |
+| Comet | Delete the `isWithdrawPaused()` rejection from `withdrawInternal` | yes | yes | **yes** | `guard-parity` reports the remaining one-sided pause guard on `supply`. |
+| Euler | Remove `nonReentrant` from `withdraw` | yes | yes | **yes** | `guard-parity` reports the remaining reentrancy guard on `deposit`. |
+| Silo | Remove `_spendAllowance` from collateral-share `burn` | yes | yes | **no** | `mint` and mutated `burn` both have no authority fact, so the expected burn-side difference disappears. |
+| Balancer | Drop `_totalSupplyOf` from the `removeLiquidity` burn path | yes | yes | **yes** | `state-parity` reports the missing total-supply write against `addLiquidity`. |
+| Angle | Remove `nonReentrant` from `_redeem` | yes | yes | **no** | `redeem` and `swapExactInput` are cross-module semantic counterparts, not a supported same-module inverse-name pair. |
+| Gearbox | Drop `_totalSupply` from the `withdraw` burn path | yes | yes | **yes** | `state-parity` reports the missing supply update against `deposit`. |
+| Spark | Drop `totalSupply` from the `withdraw` burn path | yes | yes | **yes** | `state-parity` reports the missing supply update against `deposit`. |
+| Uniswap v4 | Drop `balanceOf` from the `burn` path | yes | yes | **yes** | `state-parity` reports the missing balance update against `mint`. |
+
+The aggregate is 10/10 reached, 10/10 triggered, and 7/10 detected. The seven detections comprise three guard omissions and four accounting-write omissions. All ten unmodified ASTs still emit zero symmetry hypotheses.
+
+### Mutation miss classes
+
+| Miss class | Cases | Why it is not fixed from this sample alone |
+|---|---|---|
+| Required-side guard deletion makes the pair look equal | Morpho, Silo | Pure parity cannot infer that a particular side must retain authority. A generic “every withdrawal/burn needs authority” rule would create false positives for self-only and permissionless-benefit paths; typed principal and delegated-spend facts are needed first. |
+| Semantic inverse is cross-module and not name-isomorphic | Angle | Broad fuzzy name pairing would reintroduce the noise this study removed. A future relation source needs typed asset-flow identities or an explicit protocol operation map. |
+
+These are measured tuning-sample limitations, not permission to add broad heuristics. Detector work should be reordered by the independent blind benchmark's miss report; until that exists, the two seams above remain research hypotheses.
+
+### Mutation reproduction
+
+The exact function ids, compiler source spans, baseline AST digests, observed facts, and expected generators are pinned in [`symmetry-mutation-cases-2026-08.json`](symmetry-mutation-cases-2026-08.json). Rehydrate the same repositories, combined-json files, and directory names under one study workspace, then run:
+
+```sh
+PYTHONPATH=src python tools/measure_symmetry_mutations.py \
+  /path/to/study-workspace \
+  docs/symmetry-mutation-cases-2026-08.json \
+  mutation-results.json \
+  --mutated-directory /path/to/mutated-asts
+```
+
+The runner verifies every baseline AST hash before mutation, applies exactly one selected AST removal, runs the production `SolcAstCandidateScanner`, independently compares the exact pair summaries, and refuses `detected` unless the selected semantic fact was first reached and then removed. The retained normalized artifacts can also be replayed directly with `tools/scan_symmetry_ast.py`; that scanner accepts both solc combined-json and canonical normalized AST documents.
 
 ## Classification of every pre-fix hypothesis
 

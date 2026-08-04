@@ -31,6 +31,8 @@ These floors prevent a one-case perfect score from minting closed beta. Precisio
 
 ## Independent case-pack workflow
 
+For the current five-case Solidity pilot, the sendable author specification, custody boundary, 15-trial protocol, and publication commitment are collected in [the independent case-pack commission](independent-case-pack-commission.md).
+
 The case-pack author and trial operator must be separated by one of three comparable custody models: `separate_human`, `separate_org`, or `escrow`. Before the trial, the author:
 
 1. Pins a cutoff and creates post-cutoff targets without exposing vulnerable-versus-benign labels.

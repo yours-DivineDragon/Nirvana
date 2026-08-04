@@ -1,0 +1,245 @@
+{
+  "cases": [
+    {
+      "case_id": "morpho-withdraw-authority",
+      "combined_json": "morpho-combined.json",
+      "expected_ast_sha256": "31be2f21436b7548a4ab7452ce410aa6f100baced663c882eac5fadbd901c90c",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "category": "authority",
+        "function_id": 788,
+        "kind": "remove_guard",
+        "node_src": "7148:29:0"
+      },
+      "observation": {
+        "field": "guards",
+        "operation_id": 788,
+        "value": "authority"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:guard-parity",
+        "left_operation_id": 618,
+        "right_operation_id": 788
+      },
+      "repository": "morpho-org/morpho-blue",
+      "target_root": "morpho"
+    },
+    {
+      "case_id": "aave-repay-pause",
+      "combined_json": "asts/aave-combined.json",
+      "expected_ast_sha256": "a1508cf0e02bd7c8b74a473d3fa47c8d7d6e5d88aac33b4b404df01308f24882",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "category": "pause",
+        "function_id": 12158,
+        "kind": "remove_guard",
+        "node_src": "12927:9:38"
+      },
+      "observation": {
+        "field": "guards",
+        "operation_id": 441,
+        "value": "pause"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:guard-parity",
+        "left_operation_id": 405,
+        "right_operation_id": 441
+      },
+      "repository": "aave/aave-v3-core",
+      "target_root": "aave"
+    },
+    {
+      "case_id": "comet-withdraw-pause",
+      "combined_json": "asts/comet-combined.json",
+      "expected_ast_sha256": "08a160366e08950d1f0ed343e986b4b7af0550f268ef2dea81eef60f29fa09e1",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "category": "pause",
+        "function_id": 2789,
+        "kind": "remove_guard",
+        "node_src": "38463:18:5"
+      },
+      "observation": {
+        "field": "guards",
+        "operation_id": 2676,
+        "value": "pause"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:guard-parity",
+        "left_operation_id": 1910,
+        "right_operation_id": 2676
+      },
+      "repository": "compound-finance/comet",
+      "target_root": "comet"
+    },
+    {
+      "case_id": "euler-withdraw-reentrancy",
+      "combined_json": "asts/euler-combined.json",
+      "expected_ast_sha256": "b3314102c6d34e9388e33e00a40100277b1c55c4beedbe64080fde6c8a5269fb",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "category": "reentrancy",
+        "function_id": 609,
+        "kind": "remove_guard",
+        "node_src": "6042:12:3"
+      },
+      "observation": {
+        "field": "guards",
+        "operation_id": 609,
+        "value": "reentrancy"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:guard-parity",
+        "left_operation_id": 494,
+        "right_operation_id": 609
+      },
+      "repository": "euler-xyz/euler-vault-kit",
+      "target_root": "euler"
+    },
+    {
+      "case_id": "silo-burn-allowance",
+      "combined_json": "asts/silo-combined.json",
+      "expected_ast_sha256": "8f915c55fa6564421e142defe0eaf0e8e22a61c20938809f0b4a23ec691d73ce",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "callee_id": 19072,
+        "function_id": 11526,
+        "kind": "remove_call",
+        "node_src": "868:42:65"
+      },
+      "observation": {
+        "field": "guards",
+        "operation_id": 11526,
+        "value": "authority"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:guard-parity",
+        "left_operation_id": 11526,
+        "right_operation_id": 11497
+      },
+      "repository": "silo-finance/silo-contracts-v2",
+      "target_root": "silo"
+    },
+    {
+      "case_id": "balancer-remove-total-supply",
+      "combined_json": "asts/balancer-combined.json",
+      "expected_ast_sha256": "a88849daa4e9fa0a8e6b461d8b3ed0dd78ab460c3cf0642feae3248be2470911",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "function_id": 17362,
+        "kind": "remove_write",
+        "node_src": "5777:37:67",
+        "state": "_totalSupplyOf"
+      },
+      "observation": {
+        "field": "state_writes",
+        "operation_id": 1808,
+        "value": "_totalSupplyOf"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:state-parity",
+        "left_operation_id": 1210,
+        "right_operation_id": 1808
+      },
+      "repository": "balancer/balancer-v3-monorepo",
+      "target_root": "balancer"
+    },
+    {
+      "case_id": "angle-redeem-reentrancy",
+      "combined_json": "asts/angle-combined.json",
+      "expected_ast_sha256": "faa68e17a2c0b9dbf9cf209d00c3cb36745983f49adb53d8deaf3cfeaf18a315",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "category": "reentrancy",
+        "function_id": 409,
+        "kind": "remove_guard",
+        "node_src": "5263:12:17"
+      },
+      "observation": {
+        "field": "guards",
+        "operation_id": 98,
+        "value": "reentrancy"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:guard-parity",
+        "left_operation_id": 98,
+        "right_operation_id": 850
+      },
+      "repository": "AngleProtocol/angle-transmuter",
+      "target_root": "angle"
+    },
+    {
+      "case_id": "gearbox-withdraw-total-supply",
+      "combined_json": "asts/gearbox-combined.json",
+      "expected_ast_sha256": "92f185bfdc59f3da56b8bde9f9b8ac1c271bda6e0b8bc7095f2da681c7b3b4e7",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "function_id": 5792,
+        "kind": "remove_write",
+        "node_src": "9883:22:28",
+        "state": "_totalSupply"
+      },
+      "observation": {
+        "field": "state_writes",
+        "operation_id": 551,
+        "value": "_totalSupply"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:state-parity",
+        "left_operation_id": 401,
+        "right_operation_id": 551
+      },
+      "repository": "Gearbox-protocol/core-v3",
+      "target_root": "gearbox"
+    },
+    {
+      "case_id": "spark-withdraw-total-supply",
+      "combined_json": "asts/spark-combined.json",
+      "expected_ast_sha256": "f91eed535a346d80303326d5b11e86c56ee727979a42d6e3014a0e10cd1468c4",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "function_id": 1012,
+        "kind": "remove_write",
+        "node_src": "10585:39:7",
+        "state": "totalSupply"
+      },
+      "observation": {
+        "field": "state_writes",
+        "operation_id": 1716,
+        "value": "totalSupply"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:state-parity",
+        "left_operation_id": 1331,
+        "right_operation_id": 1716
+      },
+      "repository": "sparkdotfi/spark-vaults",
+      "target_root": "spark"
+    },
+    {
+      "case_id": "uniswap-burn-balance",
+      "combined_json": "asts/uniswap-v4-combined.json",
+      "expected_ast_sha256": "78f338ae3066ea30deed490528ff4c7c9a9ad12a8ffb66b6de6c4d5926199498",
+      "expected_baseline_symmetry_hypotheses": 0,
+      "mutation": {
+        "function_id": 7190,
+        "kind": "remove_write",
+        "node_src": "3388:31:1",
+        "state": "balanceOf"
+      },
+      "observation": {
+        "field": "state_writes",
+        "operation_id": 988,
+        "value": "balanceOf"
+      },
+      "pair": {
+        "expected_generator": "symmetry-analysis:state-parity",
+        "left_operation_id": 988,
+        "right_operation_id": 950
+      },
+      "repository": "Uniswap/v4-core",
+      "target_root": "uniswap-v4"
+    }
+  ],
+  "schema_version": "1.0.0"
+}

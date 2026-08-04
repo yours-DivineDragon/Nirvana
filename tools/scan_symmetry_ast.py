@@ -10,7 +10,10 @@ from nirvana.evm import SolcAstCandidateScanner
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Measure Nirvana symmetry hypotheses from solc combined-json AST output"
+        description=(
+            "Measure Nirvana symmetry hypotheses from solc combined-json or a "
+            "canonical normalized AST document"
+        )
     )
     parser.add_argument("repository", type=Path)
     parser.add_argument("combined_json", type=Path)
@@ -21,15 +24,18 @@ def main() -> None:
     sources = combined.get("sources")
     if not isinstance(sources, dict):
         raise ValueError("combined-json document lacks a sources object")
-    ast_document = {
-        "sources": {
-            source_name: {"ast": source_record["AST"]}
-            for source_name, source_record in sources.items()
-            if isinstance(source_name, str)
-            and isinstance(source_record, dict)
-            and isinstance(source_record.get("AST"), dict)
-        }
-    }
+    normalized_sources: dict[str, dict[str, object]] = {}
+    for source_name, source_record in sources.items():
+        if not isinstance(source_name, str) or not isinstance(source_record, dict):
+            continue
+        ast = source_record.get("AST")
+        if not isinstance(ast, dict):
+            ast = source_record.get("ast")
+        if isinstance(ast, dict):
+            normalized_sources[source_name] = {"ast": ast}
+    if not normalized_sources:
+        raise ValueError("AST document contains no compiler ASTs")
+    ast_document = {"sources": normalized_sources}
     ast_bytes = (
         json.dumps(ast_document, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode()
