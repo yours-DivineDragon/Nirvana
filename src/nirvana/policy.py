@@ -343,6 +343,18 @@ class CommandRunner:
             if artifact_directory is not None
             else None
         )
+        if workspace_artifact_output is not None and not _is_existing_workspace_directory(
+            cwd, workspace_artifact_output
+        ):
+            return CommandResult(
+                command,
+                None,
+                b"",
+                b"",
+                0,
+                "workspace artifact mountpoint must already be an in-target directory: "
+                f"{workspace_artifact_output}",
+            )
         docker_command = [
             docker,
             "run",
@@ -359,19 +371,27 @@ class CommandRunner:
             "--memory=2g",
             "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             f"--tmpfs=/work:rw,exec,nosuid,nodev,size={self.policy.docker_work_bytes},mode=1777",
-            "--tmpfs=/workspace/.anchor:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-            "--tmpfs=/workspace/.pytest_cache:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-            "--tmpfs=/workspace/broadcast:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-            "--tmpfs=/workspace/cache:rw,noexec,nosuid,nodev,size=256m,mode=1777",
-            "--tmpfs=/workspace/crytic-export:rw,noexec,nosuid,nodev,size=256m,mode=1777",
             "--mount",
             f"type=bind,src={cwd},dst=/workspace,readonly",
             "--workdir=/workspace",
         ]
-        if workspace_artifact_output != "artifacts":
-            docker_command.append(
-                "--tmpfs=/workspace/artifacts:rw,noexec,nosuid,nodev,size=256m,mode=1777"
-            )
+        workspace_tmpfs = {
+            ".anchor": "64m",
+            ".pytest_cache": "64m",
+            "broadcast": "64m",
+            "cache": "256m",
+            "crytic-export": "256m",
+            "artifacts": "256m",
+        }
+        for relative, size in workspace_tmpfs.items():
+            if (
+                relative != workspace_artifact_output
+                and _is_existing_workspace_directory(cwd, relative)
+            ):
+                docker_command.append(
+                    f"--tmpfs=/workspace/{relative}:rw,noexec,nosuid,nodev,"
+                    f"size={size},mode=1777"
+                )
         if harness_directory is not None:
             docker_command.extend(
                 [
@@ -460,3 +480,13 @@ def _workspace_artifact_output(command: list[str]) -> str | None:
     if executable in {"gradle", "gradlew", "sui"}:
         return "build"
     return None
+
+
+def _is_existing_workspace_directory(workspace: Path, relative: str) -> bool:
+    """Return whether Docker can mount safely below the read-only workspace."""
+
+    try:
+        destination = (workspace / relative).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return destination.is_dir() and workspace in destination.parents
