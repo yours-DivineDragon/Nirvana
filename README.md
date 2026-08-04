@@ -6,14 +6,14 @@ Nirvana is a local, evidence-gated security research system for authorized bug-b
 
 ## Current status
 
-Version `0.4.13` implements the complete orchestration skeleton described by the two founding PDFs:
+Version `0.4.14` implements the complete orchestration skeleton described by the two founding PDFs:
 
 - hostile-repository intake with commit, dependency, submodule, artifact, toolchain, privilege, upgrade, external-dependency, and snapshot provenance;
 - opt-in, digest-pinned Docker build/test baselines with hash-bound generated ABI, IDL, bytecode, and build artifacts;
 - a versioned Security Semantic Graph (SSG) for modules, entry points, state, assets, authority, effects, invariants, upgrades, dependencies, and trust boundaries;
 - an explicit support-maturity record per detected dialect, from `syntax_only` through `domain_complete`;
 - a ledger-backed business-flow × threat-lens coverage scheduler;
-- deterministic, AST, graph-query, attacker-sequence, specification-inference, historical-variant, test-gap, retrieval-analogy, and differential candidate generators;
+- deterministic, AST, inverse-operation symmetry, graph-query, attacker-sequence, specification-inference, historical-variant, test-gap, retrieval-analogy, and differential candidate generators;
 - typed hypotheses, Devil's Advocate and Rescue Critic decisions, rejection archives, causal deduplication, and post-validation novelty assessment;
 - all six evidence levels: `hypothesis`, `localised`, `structurally_confirmed`, `executable`, `exploit_demonstrated`, and `formally_established`;
 - assertion-checked execution receipts, replay, patched-target negative controls, health invariants, and hash-bound auditor harness overlays;
@@ -23,7 +23,7 @@ Version `0.4.13` implements the complete orchestration skeleton described by the
 - regression learning bundles and gated detector-distillation reviews that never modify production rules automatically;
 - hash-chained evidence ledgers with exportable prefix checkpoints and pre-reveal benchmark trial seals.
 
-This is still an evolving research system. The generic frontend supplies broad **syntax-level** coverage; it does not pretend that Solana, Move/Sui, native, JVM, WASM, DLT, or Web/API targets are domain-complete. Even the EVM compiler frontend currently publishes `typed`, not complete interprocedural data flow. The generated support record and `nirvana doctor` output are the authority for what a particular run can claim.
+This is still an evolving research system. The generic frontend supplies broad **syntax-level** coverage; it does not pretend that Solana, Move/Sui, native, JVM, WASM, DLT, or Web/API targets are domain-complete. The EVM compiler frontend follows direct internal calls when summarizing inverse operations, but still publishes `typed`, not path-sensitive interprocedural data flow. The generated support record and `nirvana doctor` output are the authority for what a particular run can claim.
 
 ## Install locally
 
@@ -73,6 +73,10 @@ For compiler-context EVM candidates, generate solc standard-JSON output in an is
 nirvana audit /absolute/path/to/target --solc-ast /path/to/solc-output.json \
   --output ./nirvana-runs --policy ./nirvana.toml
 ```
+
+With compiler context, Nirvana builds declaration-resolved function summaries, closes direct internal-call effects, and compares named inverse pairs such as `borrow/repay`, `deposit/withdraw`, `mint/burn`, `stake/unstake`, and `grant/revoke`. It emits separate hypotheses for asymmetric accounting writes, security guards, and security-sensitive effects. The same language-neutral operation-summary contract runs over syntax-only SSG slices for other dialects; those candidates explicitly retain the lower frontend maturity.
+
+The focused Solidity AST pass also localizes discarded or captured-but-unchecked low-level-call results around state transitions, public calls through parameter-derived targets without an AST-visible authority gate, incomplete Chainlink-style answer/freshness/round validation, callback-before-state ordering, raw spot-oracle reads, missing authority guards, and share-inflation arithmetic. These are attack-path hypotheses with falsification plans, never confirmed findings.
 
 ## Run the build and test baseline
 
