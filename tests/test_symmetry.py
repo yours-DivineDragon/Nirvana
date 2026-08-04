@@ -84,6 +84,39 @@ class SymmetryAnalyzerTests(unittest.TestCase):
 
         self.assertEqual(hypotheses, [])
 
+    def test_expected_exit_authority_is_not_reported_as_missing_parity(self) -> None:
+        hypotheses = SymmetryAnalyzer().analyze(
+            [
+                operation("evm", "deposit", writes=("balances", "totalAssets")),
+                operation(
+                    "evm",
+                    "withdraw",
+                    writes=("balances", "totalAssets"),
+                    guards=("authority",),
+                ),
+            ]
+        )
+
+        self.assertEqual(hypotheses, [])
+
+    def test_reverse_direction_authority_remains_a_review_candidate(self) -> None:
+        hypotheses = SymmetryAnalyzer().analyze(
+            [
+                operation(
+                    "evm",
+                    "deposit",
+                    writes=("balances", "totalAssets"),
+                    guards=("authority",),
+                ),
+                operation("evm", "withdraw", writes=("balances", "totalAssets")),
+            ]
+        )
+
+        self.assertEqual(
+            [item.generator for item in hypotheses],
+            ["symmetry-analysis:guard-parity"],
+        )
+
     def test_unrelated_or_cross_module_operations_are_not_paired(self) -> None:
         borrow = operation("solana", "borrow", writes=("totalDebt",))
         repay = OperationSummary(

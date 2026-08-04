@@ -105,6 +105,36 @@ SECURITY_EFFECTS = frozenset(
     }
 )
 
+# Measured against ten production DeFi codebases. These guards are normally
+# directional: value-extracting or debt-increasing paths need permission and
+# solvency checks that their funding counterparts deliberately do not. Other
+# guard categories, the reverse direction, and control-plane inverse pairs
+# remain review candidates.
+EXPECTED_DIRECTIONAL_GUARDS: dict[str, dict[str, frozenset[str]]] = {
+    "deposit/withdraw": {
+        "withdraw": frozenset({"authority", "oracle-integrity"}),
+    },
+    "deposit/redeem": {
+        "redeem": frozenset({"authority", "oracle-integrity"}),
+    },
+    "supply/withdraw": {
+        "withdraw": frozenset({"authority", "oracle-integrity"}),
+    },
+    "mint/burn": {
+        "burn": frozenset({"authority"}),
+    },
+    "mint/redeem": {
+        "redeem": frozenset({"authority", "oracle-integrity"}),
+    },
+    "borrow/repay": {
+        "borrow": frozenset({"authority", "oracle-integrity"}),
+        "repay": frozenset({"authority"}),
+    },
+    "add/remove": {
+        "remove": frozenset({"authority", "oracle-integrity"}),
+    },
+}
+
 
 class SymmetryAnalyzer:
     """Compare inverse operations after dialect-specific semantic normalization."""
@@ -196,7 +226,12 @@ class SymmetryAnalyzer:
                 ],
             )
 
-        guard_difference = (left.guards ^ right.guards) & PARITY_GUARDS
+        guard_difference = _unexpected_guard_difference(
+            relation,
+            left,
+            right,
+            (left.guards ^ right.guards) & PARITY_GUARDS,
+        )
         if guard_difference and has_security_context:
             detail = _side_difference(left.name, right.name, left.guards, right.guards, guard_difference)
             self._append(
@@ -361,6 +396,30 @@ def _inverse_match(
         if _same_operation_shape(left_tokens, right_tokens, right_verb, left_verb):
             return relation, right_verb, left_verb
     return None
+
+
+def _unexpected_guard_difference(
+    relation: InverseRelation,
+    left: OperationSummary,
+    right: OperationSummary,
+    difference: frozenset[str],
+) -> frozenset[str]:
+    expected = EXPECTED_DIRECTIONAL_GUARDS.get(relation.label, {})
+    unexpected: set[str] = set()
+    for guard in difference:
+        operation = left if guard in left.guards else right
+        operation_tokens = _name_tokens(operation.name)
+        verb = next(
+            (
+                item
+                for item in (relation.left_verb, relation.right_verb)
+                if item in operation_tokens
+            ),
+            "",
+        )
+        if guard not in expected.get(verb, frozenset()):
+            unexpected.add(guard)
+    return frozenset(unexpected)
 
 
 def _same_operation_shape(

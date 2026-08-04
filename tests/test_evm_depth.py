@@ -37,6 +37,21 @@ def assignment(state_id: int, offset: int) -> dict[str, object]:
     }
 
 
+def indexed_assignment(
+    state_id: int, index: dict[str, object], offset: int
+) -> dict[str, object]:
+    return {
+        "nodeType": "Assignment",
+        "src": f"{offset}:1:0",
+        "leftHandSide": {
+            "nodeType": "IndexAccess",
+            "baseExpression": identifier("position", state_id),
+            "indexExpression": index,
+        },
+        "rightHandSide": {"nodeType": "Literal", "value": "1"},
+    }
+
+
 def guard(condition: dict[str, object], offset: int) -> dict[str, object]:
     return {
         "nodeType": "ExpressionStatement",
@@ -70,6 +85,7 @@ def function(
     modifiers: tuple[str, ...] = (),
     parameters: tuple[tuple[int, str], ...] = (),
     offset: int = 10,
+    state_mutability: str = "nonpayable",
 ) -> dict[str, object]:
     return {
         "nodeType": "FunctionDefinition",
@@ -77,7 +93,7 @@ def function(
         "name": name,
         "kind": "function",
         "visibility": visibility,
-        "stateMutability": "nonpayable",
+        "stateMutability": state_mutability,
         "src": f"{offset}:10:0",
         "modifiers": [
             {
@@ -253,6 +269,63 @@ class SolidityDepthTests(unittest.TestCase):
 
         self.assertFalse(
             any(item.generator.startswith("symmetry-analysis:") for item in hypotheses)
+        )
+
+    def test_mapping_key_state_read_is_not_treated_as_a_write(self) -> None:
+        hypotheses = self.scan(
+            [
+                state_variable(1, "position"),
+                state_variable(2, "feeRecipient"),
+                function(
+                    10,
+                    "depositAssets",
+                    [indexed_assignment(1, identifier("account"), 20)],
+                    offset=10,
+                ),
+                function(
+                    11,
+                    "withdrawAssets",
+                    [indexed_assignment(1, identifier("feeRecipient", 2), 50)],
+                    offset=40,
+                ),
+            ]
+        )
+
+        self.assertFalse(
+            any(item.generator == "symmetry-analysis:state-parity" for item in hypotheses)
+        )
+
+    def test_view_call_name_is_not_treated_as_an_asset_effect(self) -> None:
+        view_withdraw = member_call(identifier("vault"), "withdraw", 50)
+        view_withdraw["expression"]["typeDescriptions"] = {
+            "typeIdentifier": "t_function_external_view$__$returns$_t_uint256_$",
+            "typeString": "function () view external returns (uint256)",
+        }
+        hypotheses = self.scan(
+            [
+                state_variable(1, "cash"),
+                function(
+                    10,
+                    "maxDeposit",
+                    [{"nodeType": "Return", "expression": identifier("cash", 1)}],
+                    offset=10,
+                    state_mutability="view",
+                ),
+                function(
+                    11,
+                    "maxWithdraw",
+                    [
+                        {"nodeType": "ExpressionStatement", "expression": view_withdraw},
+                        {"nodeType": "Return", "expression": identifier("cash", 1)},
+                    ],
+                    offset=40,
+                    state_mutability="view",
+                ),
+            ]
+        )
+
+        self.assertFalse(
+            any(item.generator == "symmetry-analysis:effect-parity" for item in hypotheses)
         )
 
     def test_unchecked_and_user_controlled_calls_have_benign_controls(self) -> None:
