@@ -69,6 +69,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("65532:65532", command)
             self.assertTrue(any(item.startswith("--tmpfs=/work:rw,exec") for item in command))
             self.assertIn("FOUNDRY_OUT=/work/foundry-out", command)
+            self.assertIn("FOUNDRY_CACHE_PATH=/work/foundry-cache", command)
             self.assertIn("PYTEST_ADDOPTS=-p no:cacheprovider", command)
             self.assertTrue(
                 any(item.startswith("--tmpfs=/workspace/artifacts:rw") for item in command)
@@ -81,6 +82,10 @@ class PolicyTests(unittest.TestCase):
             )
             mount = command[command.index("--mount") + 1]
             self.assertTrue(mount.endswith(",readonly"))
+            entrypoint = command.index("--entrypoint")
+            self.assertEqual(command[entrypoint + 1], "forge")
+            image = command.index("fixture@sha256:" + "a" * 64)
+            self.assertEqual(command[image + 1 :], ["test"])
 
     def test_docker_mounts_auditor_harness_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as harness_directory, patch(

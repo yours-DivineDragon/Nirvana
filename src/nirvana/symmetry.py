@@ -13,6 +13,8 @@ class OperationSummary:
     """Language-neutral facts supplied by a dialect frontend.
 
     Frontends normalize their native syntax into state, guard, and effect facts.
+    Nirvana currently supplies these facts only from the typed solc frontend;
+    future typed dialect frontends can use the same analyzer contract.
     The analyzer deliberately does not infer evidence strength from the frontend:
     every result remains a hypothesis until independently verified.
     """
@@ -305,92 +307,6 @@ class SymmetryAnalyzer:
                 proposed_next_experiment=plan[0],
             )
         )
-
-
-def operation_summaries_from_graph(graph: object) -> list[OperationSummary]:
-    """Project syntax-only SSG slices into the same frontend-neutral contract.
-
-    Typed dialects are intentionally skipped: their compiler frontend supplies
-    declaration-resolved summaries and should not be diluted by lexical facts.
-    """
-
-    graph_nodes = list(getattr(graph, "nodes", []))
-    graph_edges = list(getattr(graph, "edges", []))
-    maturity = {
-        str(item.dialect): str(item.maturity.value)
-        for item in getattr(graph, "support", [])
-    }
-    nodes = {str(item.node_id): item for item in graph_nodes}
-    outgoing: dict[str, list[object]] = {}
-    modules: dict[str, str] = {}
-    for edge in graph_edges:
-        outgoing.setdefault(str(edge.source), []).append(edge)
-        source = nodes.get(str(edge.source))
-        target = nodes.get(str(edge.target))
-        if (
-            str(edge.kind) == "contains"
-            and source is not None
-            and target is not None
-            and str(source.kind) == "module"
-        ):
-            modules[str(target.node_id)] = str(source.label)
-
-    summaries: list[OperationSummary] = []
-    for node in graph_nodes:
-        if str(node.kind) not in {"symbol", "entry_point"} or node.location is None:
-            continue
-        dialect = str(node.dialect)
-        if maturity.get(dialect) != "syntax_only":
-            continue
-        children: list[tuple[object, object]] = []
-        for edge in outgoing.get(str(node.node_id), []):
-            child = nodes.get(str(edge.target))
-            if child is not None:
-                children.append((edge, child))
-        state_reads = frozenset(
-            _normalise_fact(str(child.label))
-            for edge, child in children
-            if str(child.kind) == "state" and str(edge.kind) in {"reads", "reaches"}
-        )
-        state_writes = frozenset(
-            _normalise_fact(str(child.label))
-            for edge, child in children
-            if str(child.kind) == "state" and str(edge.kind) == "writes"
-        )
-        guards: set[str] = set()
-        effects: set[str] = set()
-        for edge, child in children:
-            child_kind = str(child.kind)
-            label = str(child.label)
-            edge_kind = str(edge.kind)
-            if child_kind in {"invariant", "authority"} or edge_kind in {
-                "guards",
-                "administers",
-            }:
-                guards.update(classify_guard_text(label))
-                if child_kind == "authority":
-                    guards.add("authority")
-            effects.update(classify_effect_text(label, child_kind, edge_kind))
-        location = CodeLocation(**dict(node.location))
-        summaries.append(
-            OperationSummary(
-                operation_id=str(node.node_id),
-                dialect=dialect,
-                module=modules.get(str(node.node_id), location.path),
-                name=str(node.label),
-                location=location,
-                entry_point=str(node.kind) == "entry_point",
-                state_reads=state_reads,
-                state_writes=state_writes,
-                guards=frozenset(guards),
-                effects=frozenset(effects),
-                graph_slice=tuple(
-                    [str(node.node_id), *[str(child.node_id) for _, child in children[:32]]]
-                ),
-                frontend="security-semantic-graph:syntax_only",
-            )
-        )
-    return summaries
 
 
 def classify_guard_text(value: str) -> frozenset[str]:

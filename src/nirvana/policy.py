@@ -406,7 +406,14 @@ class CommandRunner:
                 )
         for key in sorted(container_environment):
             docker_command.extend(["--env", f"{key}={container_environment[key]}"])
-        docker_command.extend([self.policy.docker_image, *command])
+        # Never inherit an image entrypoint. Official verifier images may use a
+        # shell entrypoint (the Foundry image uses `/bin/sh -c`), which would
+        # collapse a reviewed argv vector back into an opaque command string.
+        # Docker resolves this bare executable inside the pinned image while
+        # preserving every remaining argument as a distinct argv element.
+        docker_command.extend(
+            ["--entrypoint", command[0], self.policy.docker_image, *command[1:]]
+        )
         return self._run_host_docker(docker_command, cwd, stdin)
 
     def _run_host_docker(self, command: list[str], cwd: Path, stdin: bytes) -> CommandResult:

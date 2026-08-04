@@ -190,13 +190,17 @@ def classify_mismatch(
         raise ValueError("mismatch classification requires a non-empty rationale")
     report = load_differential_report(report_path)
     _require_valid_report(report)
+    report_digest = sha256_file(report_path.resolve(strict=True))
+    if run_directory is not None:
+        attachment = _require_attached_report(run_directory, report_digest)
+        report_digest = str(attachment["artifact_sha256"])
     matches = [item for item in report["mismatches"] if str(item["case_id"]) == case_id]
     if len(matches) != 1:
         raise ValueError(f"differential mismatch is not uniquely available: {case_id}")
     triage = {
         "schema_version": "1.0.0",
         "created_at": utc_now(),
-        "report_sha256": sha256_file(report_path.resolve(strict=True)),
+        "report_sha256": report_digest,
         "case_id": case_id,
         "classification": classification.value,
         "rationale": list(rationale),
@@ -210,7 +214,11 @@ def classify_mismatch(
             run_directory,
             "differential_mismatch_classified",
             output_path,
-            {"case_id": case_id, "classification": classification.value},
+            {
+                "case_id": case_id,
+                "classification": classification.value,
+                "report_sha256": report_digest,
+            },
         )
     return triage
 
@@ -359,6 +367,26 @@ def _require_valid_report(report: dict[str, Any]) -> None:
         "differential report is invalid and cannot enter the hypothesis, triage, "
         f"or disclosure pipeline: {reasons}"
     )
+
+
+def _require_attached_report(
+    run_directory: Path, report_digest: str
+) -> dict[str, Any]:
+    run_root = run_directory.resolve(strict=True)
+    ledger = EvidenceLedger(run_root / "evidence.jsonl")
+    records = ledger.records()
+    ledger.verify()
+    matches = [
+        record["payload"]
+        for record in records
+        if record["payload"].get("event") == "differential_report_attached"
+        and record["payload"].get("attachment_source")
+        == "in_process_spec_compare"
+        and record["payload"].get("artifact_sha256") == report_digest
+    ]
+    if len(matches) != 1:
+        raise ValueError("differential report is not attached to this run")
+    return matches[0]
 
 
 def _attached_hypotheses(

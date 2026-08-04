@@ -20,3 +20,31 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e .
       - run: make check
+
+  docker-forge-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry@sha256:f6a3fd201ae617fdc67bf7b3db9abdca7678e2589e15eda6bc84f88eb5239e04
+      SOLC_SHA256: f3e987dc6ecebd4bd350c48edcbc320b46cf9e3109bd3fc3d88f1acaf4c428f7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Fetch checksum-pinned solc 0.8.30
+        run: |
+          mkdir -p "$RUNNER_TEMP/nirvana-solc"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            https://github.com/ethereum/solidity/releases/download/v0.8.30/solc-static-linux \
+            --output "$RUNNER_TEMP/nirvana-solc/solc"
+          echo "$SOLC_SHA256  $RUNNER_TEMP/nirvana-solc/solc" | sha256sum --check
+          chmod 0555 "$RUNNER_TEMP/nirvana-solc/solc"
+      - name: Pull digest-pinned verifier image
+        run: docker pull "$FOUNDRY_IMAGE"
+      - name: Mint and replay real exploit evidence
+        env:
+          NIRVANA_RUN_DOCKER_INTEGRATION: "1"
+          NIRVANA_SOLC: ${{ runner.temp }}/nirvana-solc/solc
+        run: python -m unittest -v tests.test_docker_integration

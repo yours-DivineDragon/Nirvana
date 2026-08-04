@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .util import canonical_json, sha256_bytes, utc_now
+from .util import canonical_json, sha256_bytes, sha256_file, utc_now
 from .contracts import validate_contract
 from .util import atomic_write_json
 
@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - Windows fallback
 
 
 GENESIS_HASH = "0" * 64
+MAX_BOUND_DIFFERENTIAL_REPORT_BYTES = 256 * 1024 * 1024
 
 
 class LedgerIntegrityError(ValueError):
@@ -84,6 +85,7 @@ class EvidenceLedger:
     def verify(self) -> int:
         records = self.records()
         self._verify_records(records)
+        self._verify_bound_artifacts(records)
         return len(records)
 
     def export_checkpoint(self, output: Path) -> dict[str, Any]:
@@ -138,3 +140,37 @@ class EvidenceLedger:
             if record["record_hash"] != calculated_hash:
                 raise LedgerIntegrityError(f"record {expected_sequence} was modified")
             previous_hash = record["record_hash"]
+
+    @staticmethod
+    def _verify_bound_artifacts(records: list[dict[str, Any]]) -> None:
+        for record in records:
+            payload = record["payload"]
+            if payload.get("event") != "differential_report_attached":
+                continue
+            artifact_path = payload.get("artifact_path")
+            expected_digest = payload.get("artifact_sha256")
+            if not isinstance(artifact_path, str) or not isinstance(
+                expected_digest, str
+            ):
+                raise LedgerIntegrityError(
+                    "attached differential report record lacks its artifact binding"
+                )
+            try:
+                artifact = Path(artifact_path).resolve(strict=True)
+                size = artifact.stat().st_size
+            except OSError as error:
+                raise LedgerIntegrityError(
+                    "attached differential report is unavailable"
+                ) from error
+            if not artifact.is_file():
+                raise LedgerIntegrityError(
+                    "attached differential report is not a regular file"
+                )
+            if size > MAX_BOUND_DIFFERENTIAL_REPORT_BYTES:
+                raise LedgerIntegrityError(
+                    "attached differential report exceeds the 256 MB verification limit"
+                )
+            if sha256_file(artifact) != expected_digest:
+                raise LedgerIntegrityError(
+                    "attached differential report no longer matches the ledger"
+                )
