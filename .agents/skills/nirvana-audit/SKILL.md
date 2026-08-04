@@ -37,11 +37,12 @@ Operate Nirvana as a local workflow. Use the coding agent already running this s
 
 1. Inspect the SSG support array before using it. `syntax_only` edges are recall aids, not sound call/data-flow facts.
 2. Identify assets, authority, entry points, persistent state, state transitions, callbacks, external trust boundaries, upgrades, accounting rules, cryptographic assumptions, and liveness boundaries.
-3. Use `nirvana coverage list <run-directory>` as the work queue. Work by `business flow x threat lens`, not `file x generic checklist`.
-4. For EVM targets, read `references/evm.md` and cover every applicable flow and lens.
-5. Mark a task covered only with replay-verified evidence or a concrete note beginning `negative-analysis:` that states the deterministic basis. Record reached SSG node IDs; candidate generation alone is not coverage.
-6. Track functions, asset paths, state transitions, trust boundaries, privileged actions, invariants, reached states, and tested hypotheses.
-7. Stop expanding a lane when marginal coverage reaches zero; redirect effort to unreviewed high-risk flows.
+3. Review every `symmetry-analysis:*` hypothesis as a paired path: confirm the inverse relationship, compare declaration-resolved state/guard/effect summaries, and try the less-restricted or under-accounted side in an alternating sequence. Intentional asymmetry is a rejection reason, not a finding.
+4. Use `nirvana coverage list <run-directory>` as the work queue. Work by `business flow x threat lens`, not `file x generic checklist`.
+5. For EVM targets, read `references/evm.md` and cover every applicable flow and lens.
+6. Mark a task covered only with replay-verified evidence or a concrete note beginning `negative-analysis:` that states the deterministic basis. Record reached SSG node IDs; candidate generation alone is not coverage.
+7. Track functions, asset paths, state transitions, trust boundaries, privileged actions, invariants, reached states, and tested hypotheses.
+8. Stop expanding a lane when marginal coverage reaches zero; redirect effort to unreviewed high-risk flows.
 
 ## Record typed hypotheses
 

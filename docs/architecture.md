@@ -20,7 +20,7 @@ Every mutable conclusion is an append-only ledger event. JSON artifacts are proj
 | Polyglot frontend | Publish a maturity level and limitations for every detected dialect | Generic bounded syntax frontend for all named families; supplied EVM AST raises EVM to `typed` |
 | Security Semantic Graph | Typed nodes/edges for syntax, call, state, asset, authority, effects, invariants, upgrades, dependencies, and trust | Versioned, hash-bound SSG implemented; syntax-derived edges remain explicitly unsound until corroborated |
 | Coverage scheduler | Risk-prioritized business-flow × threat-lens work queue and tracked completeness | Ledger-backed schedule and coverage updates implemented |
-| Candidate ensemble | Deterministic, AST, graph, attacker, spec-inference, variant, differential, test-gap, and retrieval generators | Implemented as hypothesis generators; none self-promote to evidence |
+| Candidate ensemble | Deterministic, AST, symmetry, graph, attacker, spec-inference, variant, differential, test-gap, and retrieval generators | Implemented as hypothesis generators; none self-promote to evidence |
 | Hypothesis board | Typed state, assumptions, graph slices, costs, supporting and contradicting evidence | Ledger-backed board implemented |
 | Verification router | Cheapest suitable structural, dynamic, fuzz, symbolic, exploit, or formal evaluator | Adapter-bound execution, negative controls, assertions, health invariants, replay, harness overlays, and all six levels implemented |
 | Evidence ledger | Immutable provenance, receipts, artifacts, and independently anchorable heads | Hash-chained JSONL plus prefix checkpoints implemented; external storage remains an operator responsibility |
@@ -34,6 +34,12 @@ Every mutable conclusion is an append-only ledger event. JSON artifacts are proj
 The SSG is language-neutral at the storage layer and dialect-specific at ingestion. Nodes represent modules, symbols/entry points, state, assets, authority, effects, trust boundaries, invariants, upgrades, and external dependencies. Edges represent containment, calls, reads/writes/transfers, guards, authority, upgrades, trust crossings, dependencies, constraints, and reachability.
 
 Stable node IDs bind hypotheses, coverage updates, causal finding paths, variant templates, and learning candidates. A lexical edge is labelled syntax-only; it does not become a sound call/data-flow edge because it is stored in a graph. Compiler or runtime evidence must establish stronger semantics.
+
+## Inverse-operation analysis
+
+Dialect frontends normalize operations into one contract: module, entry-point identity, state reads/writes, guard classes, security-sensitive effects, source location, and frontend provenance. The symmetry analyzer pairs inverse names only within a dialect and module, then compares coupled accounting state, authority/pause/replay/oracle/reentrancy guards, and external effects.
+
+The solc frontend resolves state declarations and follows direct internal function calls to a fixed point before comparison. Syntax-only dialects use bounded SSG slices through the same interface. The latter remain lexical review leads; the shared representation makes stronger Move, Rust, Solana, JVM, or Web/API frontends additive rather than requiring a new detector.
 
 ## State and trust boundaries
 
@@ -63,7 +69,7 @@ Every detected dialect publishes exactly one level:
 4. `executable`
 5. `domain_complete`
 
-The support record lists frontends, available runtime adapters, modeled concepts, and limitations. Maturity is not inferred from file extensions alone, and runtime evidence is still established per run. Version 0.4's generic frontend is `syntax_only`; a supplied, hash-bound solc AST raises EVM to `typed`. No bundled dialect currently claims `domain_complete`.
+The support record lists frontends, available runtime adapters, modeled concepts, and limitations. Maturity is not inferred from file extensions alone, and runtime evidence is still established per run. Version 0.4's generic frontend is `syntax_only`; a supplied, hash-bound solc AST raises EVM to `typed` and enables declaration-resolved inverse-operation summaries. No bundled dialect currently claims `domain_complete`.
 
 ## Stable boundaries
 

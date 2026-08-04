@@ -11,6 +11,7 @@ from typing import Any, Iterable
 from .contracts import validate_contract
 from .intake import FileRecord, ScopeManifest
 from .models import CodeLocation, Hypothesis, SupportMaturity
+from .symmetry import SymmetryAnalyzer, operation_summaries_from_graph
 from .util import canonical_json, jsonable, sha256_bytes, sha256_file, utc_now
 
 
@@ -275,7 +276,11 @@ class SemanticGraphBuilder:
             for index, (name, start, end, declaration) in enumerate(
                 symbols[: min(MAX_SYMBOLS_PER_FILE, remaining_nodes)]
             ):
-                symbol_kind = "entry_point" if _ENTRY_PATTERN.search(declaration) else "symbol"
+                symbol_kind = (
+                    "entry_point"
+                    if _ENTRY_PATTERN.search(declaration) or _entry_point_name(name)
+                    else "symbol"
+                )
                 symbol_id = _node_id(symbol_kind, dialect, record.path, str(start), name, str(index))
                 nodes[symbol_id] = SemanticNode(
                     symbol_id,
@@ -381,6 +386,29 @@ def graph_hypotheses(
     nodes = {node.node_id: node for node in graph.nodes}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge)
+
+    # Inverse-operation parity is evaluated before broad per-node recall so a
+    # large repository cannot crowd the higher-context candidates out of the
+    # bounded hypothesis budget. Typed dialects use their compiler frontend;
+    # this projection covers every syntax-only dialect through the same model.
+    symmetry_analyzer = SymmetryAnalyzer(max_hypotheses=MAX_GRAPH_HYPOTHESES)
+    symmetry_candidates = symmetry_analyzer.analyze(operation_summaries_from_graph(graph))
+    if symmetry_analyzer.truncated:
+        graph.warnings.append(
+            "symmetry analysis reached its 250000-pair safety limit"
+        )
+    for candidate in symmetry_candidates:
+        if len(generated) >= MAX_GRAPH_HYPOTHESES:
+            break
+        fingerprint = _hypothesis_fingerprint(
+            candidate.security_property,
+            candidate.suspected_violation,
+            candidate.candidate_locations,
+        )
+        if fingerprint in existing_fingerprints:
+            continue
+        existing_fingerprints.add(fingerprint)
+        generated.append(candidate)
 
     test_text = _test_index(root)
     for node in graph.nodes:
@@ -971,7 +999,7 @@ def _support_record(dialect: str, compiler_dialects: set[str]) -> DialectSupport
         runtime_adapters=list(definition.runtime_adapters),
         concepts=list(definition.concepts),
         limitations=(
-            ["compiler artefact supplies declarations, types, and direct references; interprocedural data/effect flow remains incomplete"]
+            ["compiler artefact supplies declarations, types, direct references, and bounded internal-call summaries; path-sensitive data/effect flow remains incomplete"]
             if typed
             else ["syntax indexing only; types, dispatch, feasibility, and data flow are unproven"]
         ),
@@ -985,6 +1013,12 @@ def _node_id(kind: str, *parts: str) -> str:
 
 def _normalise_words(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+
+
+def _entry_point_name(value: str) -> bool:
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    tokens = {item.lower() for item in re.findall(r"[A-Za-z0-9]+", separated)}
+    return bool(tokens & {"entry", "endpoint", "handler", "instruction", "route"})
 
 
 def _test_index(root: Path) -> str:

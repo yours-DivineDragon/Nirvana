@@ -72,7 +72,8 @@ def audit(
     ast_path: Path | None = None
     if solc_ast is not None:
         ast_path = solc_ast.resolve(strict=True)
-        ast_hypotheses = SolcAstCandidateScanner().scan_file(ast_path, target_root)
+        ast_scanner = SolcAstCandidateScanner()
+        ast_hypotheses = ast_scanner.scan_file(ast_path, target_root)
         known = {item.hypothesis_id for item in hypotheses}
         hypotheses.extend(item for item in ast_hypotheses if item.hypothesis_id not in known)
         ledger.append(
@@ -82,6 +83,7 @@ def audit(
                 "path": str(ast_path),
                 "sha256": sha256_file(ast_path),
                 "hypotheses": len(ast_hypotheses),
+                "warnings": list(ast_scanner.warnings),
             }
         )
     graph = SemanticGraphBuilder(

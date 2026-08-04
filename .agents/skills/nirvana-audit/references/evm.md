@@ -40,4 +40,8 @@ Do not infer safety from a clean deterministic scan. Do not infer a bug from a l
 
 ## Compiler AST intake
 
-Prefer solc standard-JSON AST context for promoted EVM detector work. Generate it in the pinned sandbox, preserve the compiler version and input hashes, and pass the existing output with `nirvana audit --solc-ast`. Nirvana currently queries AST-visible external-call/state-write ordering, missing authority guards, raw pool observations, and share-conversion arithmetic. These remain hypotheses until independent structural or executable evidence crosses the gate.
+Prefer solc standard-JSON AST context for promoted EVM detector work. Generate it in the pinned sandbox, preserve the compiler version and input hashes, and pass the existing output with `nirvana audit --solc-ast`.
+
+Nirvana builds declaration-resolved operation summaries and follows direct internal calls before comparing inverse paths. Review `symmetry-analysis:state-parity`, `guard-parity`, and `effect-parity` candidates by deriving the intended conservation equation and alternating the paired operations. Reject intentional asymmetry explicitly.
+
+The AST pass also queries external-call/state-write ordering, discarded low-level-call results, parameter-derived call/delegatecall targets without visible authority, Chainlink-style positive/fresh/complete-round validation, missing authority guards, raw pool observations, and share-conversion arithmetic. Compiler AST is context, not control-flow proof; every result remains a hypothesis until independent structural or executable evidence crosses the gate.
