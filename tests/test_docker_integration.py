@@ -138,7 +138,7 @@ class RealDockerForgeIntegrationTests(unittest.TestCase):
                 evidence = board.execute_evidence(request_path, runner)
             except ValueError as error:
                 rejected = sorted(
-                    (result.run_directory / "evidence" / request["evidence_id"]).glob(
+                    (result.run_directory / "artifacts" / request["evidence_id"]).glob(
                         "rejected-*.json"
                     )
                 )
