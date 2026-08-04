@@ -11,7 +11,6 @@ from typing import Any, Iterable
 from .contracts import validate_contract
 from .intake import FileRecord, ScopeManifest
 from .models import CodeLocation, Hypothesis, SupportMaturity
-from .symmetry import SymmetryAnalyzer, operation_summaries_from_graph
 from .util import canonical_json, jsonable, sha256_bytes, sha256_file, utc_now
 
 
@@ -386,29 +385,6 @@ def graph_hypotheses(
     nodes = {node.node_id: node for node in graph.nodes}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge)
-
-    # Inverse-operation parity is evaluated before broad per-node recall so a
-    # large repository cannot crowd the higher-context candidates out of the
-    # bounded hypothesis budget. Typed dialects use their compiler frontend;
-    # this projection covers every syntax-only dialect through the same model.
-    symmetry_analyzer = SymmetryAnalyzer(max_hypotheses=MAX_GRAPH_HYPOTHESES)
-    symmetry_candidates = symmetry_analyzer.analyze(operation_summaries_from_graph(graph))
-    if symmetry_analyzer.truncated:
-        graph.warnings.append(
-            "symmetry analysis reached its 250000-pair safety limit"
-        )
-    for candidate in symmetry_candidates:
-        if len(generated) >= MAX_GRAPH_HYPOTHESES:
-            break
-        fingerprint = _hypothesis_fingerprint(
-            candidate.security_property,
-            candidate.suspected_violation,
-            candidate.candidate_locations,
-        )
-        if fingerprint in existing_fingerprints:
-            continue
-        existing_fingerprints.add(fingerprint)
-        generated.append(candidate)
 
     test_text = _test_index(root)
     for node in graph.nodes:

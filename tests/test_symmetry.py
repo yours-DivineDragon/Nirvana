@@ -84,6 +84,39 @@ class SymmetryAnalyzerTests(unittest.TestCase):
 
         self.assertEqual(hypotheses, [])
 
+    def test_expected_exit_authority_is_not_reported_as_missing_parity(self) -> None:
+        hypotheses = SymmetryAnalyzer().analyze(
+            [
+                operation("evm", "deposit", writes=("balances", "totalAssets")),
+                operation(
+                    "evm",
+                    "withdraw",
+                    writes=("balances", "totalAssets"),
+                    guards=("authority",),
+                ),
+            ]
+        )
+
+        self.assertEqual(hypotheses, [])
+
+    def test_reverse_direction_authority_remains_a_review_candidate(self) -> None:
+        hypotheses = SymmetryAnalyzer().analyze(
+            [
+                operation(
+                    "evm",
+                    "deposit",
+                    writes=("balances", "totalAssets"),
+                    guards=("authority",),
+                ),
+                operation("evm", "withdraw", writes=("balances", "totalAssets")),
+            ]
+        )
+
+        self.assertEqual(
+            [item.generator for item in hypotheses],
+            ["symmetry-analysis:guard-parity"],
+        )
+
     def test_unrelated_or_cross_module_operations_are_not_paired(self) -> None:
         borrow = operation("solana", "borrow", writes=("totalDebt",))
         repay = OperationSummary(
@@ -118,30 +151,28 @@ class SymmetryAnalyzerTests(unittest.TestCase):
             ["symmetry-analysis:effect-parity"],
         )
 
-    def test_syntax_only_frontend_runs_symmetry_in_normal_audit_flow(self) -> None:
-        for safe in (False, True):
-            with self.subTest(safe=safe), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                target = root / "target"
-                target.mkdir()
-                target.joinpath("api.py").write_text(
-                    "def deposit_handler():\n"
-                    "    require(owner)\n"
-                    "    state.balance = 1\n"
-                    "    transfer(asset)\n\n"
-                    "def withdraw_handler():\n"
-                    + ("    require(owner)\n" if safe else "")
-                    + "    state.balance = 0\n"
-                    "    transfer(asset)\n"
-                )
+    def test_syntax_only_frontend_does_not_claim_inverse_parity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.mkdir()
+            target.joinpath("api.py").write_text(
+                "def deposit_handler():\n"
+                "    require(owner)\n"
+                "    state.balance = 1\n"
+                "    transfer(asset)\n\n"
+                "def withdraw_handler():\n"
+                "    state.balance = 0\n"
+                "    transfer(asset)\n"
+            )
 
-                result = audit(target, root / "runs")
-                parity = [
-                    item
-                    for item in result.hypotheses
-                    if item.generator == "symmetry-analysis:guard-parity"
-                ]
-                self.assertEqual(len(parity), 0 if safe else 1)
+            result = audit(target, root / "runs")
+            parity = [
+                item
+                for item in result.hypotheses
+                if item.generator.startswith("symmetry-analysis:")
+            ]
+            self.assertEqual(parity, [])
 
     def test_pair_comparison_budget_is_bounded_and_visible(self) -> None:
         analyzer = SymmetryAnalyzer(max_pair_comparisons=1)

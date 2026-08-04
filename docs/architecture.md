@@ -39,7 +39,7 @@ Stable node IDs bind hypotheses, coverage updates, causal finding paths, variant
 
 Dialect frontends normalize operations into one contract: module, entry-point identity, state reads/writes, guard classes, security-sensitive effects, source location, and frontend provenance. The symmetry analyzer pairs inverse names only within a dialect and module, then compares coupled accounting state, authority/pause/replay/oracle/reentrancy guards, and external effects.
 
-The solc frontend resolves state declarations and follows direct internal function calls to a fixed point before comparison. Syntax-only dialects use bounded SSG slices through the same interface. The latter remain lexical review leads; the shared representation makes stronger Move, Rust, Solana, JVM, or Web/API frontends additive rather than requiring a new detector.
+The solc frontend resolves assignment storage bases, state declarations, typed read-only calls, and direct internal function calls to a fixed point before comparison. It is currently the only bundled frontend allowed to emit inverse-parity hypotheses. Guard comparison preserves direction: measured owner and solvency gates on the risk-bearing side of common value-flow pairs are expected, while reverse-direction and non-directional guard differences remain candidates. Syntax-only SSG slices do not populate declaration-resolved state, guard, and effect facts, so they are deliberately excluded. The shared representation makes future typed Move, Rust, Solana, JVM, or Web/API frontends additive rather than requiring a new detector. The empirical basis and its limitations are recorded in [the August 2026 symmetry study](symmetry-study-2026-08.md).
 
 ## State and trust boundaries
 

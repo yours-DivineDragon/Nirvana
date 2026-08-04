@@ -1,0 +1,9 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+cache_path = "cache"
+solc = "/harness/solc"
+offline = true
+allow_paths = ["/workspace"]
+remappings = ["target/=../workspace/"]

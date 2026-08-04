@@ -604,7 +604,7 @@ def _compiler_operation_summaries(
                     state_reads=reads,
                     state_writes=writes,
                     guards=set(_function_guard_categories(function, nodes)),
-                    effects=set(_function_effect_categories(nodes)),
+                    effects=set(_function_effect_categories(function, nodes)),
                     internal_calls=internal_calls,
                 )
 
@@ -765,13 +765,38 @@ def _state_write_declarations(
     node: dict[str, object], state_ids: set[int]
 ) -> set[int]:
     if node.get("nodeType") == "Assignment":
-        return _referenced_declarations(node.get("leftHandSide")) & state_ids
+        return _lvalue_state_declarations(node.get("leftHandSide"), state_ids)
     if node.get("nodeType") == "UnaryOperation" and node.get("operator") in {"++", "--", "delete"}:
-        return _referenced_declarations(node.get("subExpression")) & state_ids
+        return _lvalue_state_declarations(node.get("subExpression"), state_ids)
     if node.get("nodeType") == "FunctionCall":
         member = _low_level_member(node)
         if member is not None and member.get("memberName") in {"push", "pop"}:
-            return _referenced_declarations(member.get("expression")) & state_ids
+            return _lvalue_state_declarations(member.get("expression"), state_ids)
+    return set()
+
+
+def _lvalue_state_declarations(node: object, state_ids: set[int]) -> set[int]:
+    """Resolve storage bases without treating mapping keys as writes."""
+
+    if not isinstance(node, dict):
+        return set()
+    node_type = node.get("nodeType")
+    if node_type in {"Identifier", "IdentifierPath"}:
+        declaration = node.get("referencedDeclaration")
+        if isinstance(declaration, int) and declaration in state_ids:
+            return {int(declaration)}
+        return set()
+    if node_type == "MemberAccess":
+        return _lvalue_state_declarations(node.get("expression"), state_ids)
+    if node_type in {"IndexAccess", "IndexRangeAccess"}:
+        return _lvalue_state_declarations(node.get("baseExpression"), state_ids)
+    if node_type == "TupleExpression":
+        components = node.get("components")
+        if not isinstance(components, list):
+            return set()
+        return set().union(
+            *(_lvalue_state_declarations(item, state_ids) for item in components)
+        )
     return set()
 
 
@@ -968,13 +993,18 @@ def _oracle_validation_signals(nodes: list[dict[str, object]]) -> set[str]:
     return signals
 
 
-def _function_effect_categories(nodes: list[dict[str, object]]) -> frozenset[str]:
+def _function_effect_categories(
+    function: dict[str, object], nodes: list[dict[str, object]]
+) -> frozenset[str]:
     effects: set[str] = set()
+    if function.get("stateMutability") not in {"view", "pure"}:
+        effects.update(classify_effect_text(str(function.get("name") or "")))
     for node in nodes:
         if node.get("nodeType") != "FunctionCall":
             continue
         member_name = _low_level_member_name(node)
-        if _external_call(node):
+        external_call = _external_call(node)
+        if external_call:
             effects.add("external-control")
         if member_name == "delegatecall":
             effects.add("delegated-execution")
@@ -982,13 +1012,24 @@ def _function_effect_categories(nodes: list[dict[str, object]]) -> frozenset[str
         if isinstance(expression, dict) and expression.get("nodeType") == "FunctionCallOptions":
             expression = expression.get("expression")
         names: list[str] = []
+        type_text = ""
         if isinstance(expression, dict):
             for key in ("name", "memberName"):
                 value = expression.get(key)
                 if isinstance(value, str):
                     names.append(value)
-        for name in names:
-            effects.update(classify_effect_text(name))
+            descriptions = expression.get("typeDescriptions")
+            if isinstance(descriptions, dict):
+                type_text = " ".join(
+                    str(descriptions.get(key, "")).lower()
+                    for key in ("typeIdentifier", "typeString")
+                )
+        known_read_only = any(
+            mutability in type_text for mutability in (" view", " pure")
+        )
+        if not known_read_only:
+            for name in names:
+                effects.update(classify_effect_text(name))
     return frozenset(effects)
 
 

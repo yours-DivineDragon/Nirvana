@@ -57,6 +57,8 @@ class PolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch(
             "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
         ), patch("nirvana.policy.subprocess.run") as run:
+            (Path(directory) / "artifacts").mkdir()
+            (Path(directory) / "crytic-export").mkdir()
             run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
             result = CommandRunner(
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
@@ -69,6 +71,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("65532:65532", command)
             self.assertTrue(any(item.startswith("--tmpfs=/work:rw,exec") for item in command))
             self.assertIn("FOUNDRY_OUT=/work/foundry-out", command)
+            self.assertIn("FOUNDRY_CACHE_PATH=/work/foundry-cache", command)
             self.assertIn("PYTEST_ADDOPTS=-p no:cacheprovider", command)
             self.assertTrue(
                 any(item.startswith("--tmpfs=/workspace/artifacts:rw") for item in command)
@@ -81,6 +84,26 @@ class PolicyTests(unittest.TestCase):
             )
             mount = command[command.index("--mount") + 1]
             self.assertTrue(mount.endswith(",readonly"))
+            entrypoint = command.index("--entrypoint")
+            self.assertEqual(command[entrypoint + 1], "forge")
+            image = command.index("fixture@sha256:" + "a" * 64)
+            self.assertEqual(command[image + 1 :], ["test"])
+
+    def test_docker_does_not_mount_missing_workspace_overlays(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
+        ), patch("nirvana.policy.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
+            result = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            ).run(["forge", "test"], Path(directory))
+
+            self.assertEqual(result.return_code, 0)
+            command = run.call_args.args[0]
+            self.assertFalse(
+                any(item.startswith("--tmpfs=/workspace/") for item in command)
+            )
 
     def test_docker_mounts_auditor_harness_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as harness_directory, patch(
@@ -112,6 +135,7 @@ class PolicyTests(unittest.TestCase):
             "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
         ), patch("nirvana.policy.subprocess.run") as run:
             artifacts = Path(artifact_directory)
+            (Path(directory) / "artifacts").mkdir()
             run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
             result = CommandRunner(
                 ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
@@ -136,6 +160,23 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(
                 any(item.startswith("--tmpfs=/workspace/artifacts:") for item in command)
             )
+
+    def test_workspace_artifact_capture_requires_existing_mountpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as artifact_directory, patch(
+            "nirvana.policy.shutil.which", return_value="/usr/bin/docker"
+        ), patch("nirvana.policy.subprocess.run") as run:
+            result = CommandRunner(
+                ExecutionPolicy(docker_image="fixture@sha256:" + "a" * 64),
+                ExecutionMode.DOCKER,
+            ).run(
+                ["npx", "hardhat", "compile"],
+                Path(directory),
+                artifact_directory=Path(artifact_directory),
+            )
+
+            self.assertIsNone(result.return_code)
+            self.assertIn("must already be an in-target directory", result.blocked_reason or "")
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

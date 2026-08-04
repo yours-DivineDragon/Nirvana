@@ -172,6 +172,10 @@ def refresh_report(run_directory: Path) -> None:
     ]
     for hypothesis in hypotheses:
         hypothesis.status = current_hypothesis_status(records, hypothesis.hypothesis_id)
+    hypothesis_text = "".join(
+        canonical_json(item.to_dict()) + "\n" for item in hypotheses
+    )
+    atomic_write_text(resolved / "hypotheses.jsonl", hypothesis_text)
     findings = [
         Finding.from_dict(record["payload"]["finding"])
         for record in records
